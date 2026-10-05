@@ -1,6 +1,6 @@
 # Agent guidance
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before making changes.
+Read [Development](README.md#development) before making changes.
 
 - Verify the repository remote and intended PR destination before publishing.
 - Keep changes focused on the requested scope and preserve existing attribution.
