@@ -139,6 +139,27 @@ Print the test slip, tear it off, and measure the white band above the card name
 That is the number. The default is 12 mm; the layout gets what is left of the
 88 mm after it and the 5 mm foot margin, which is 71 mm or 568 dots.
 
+## Development
+
+For contributions to this fork, start a focused branch from `main` and open a
+pull request here. Include validation results and any remaining limitations.
+
+To build and run the available unit tests, use JDK 21 and the Android SDK with
+platform 34 and build-tools 34.0.0. Set `ANDROID_HOME` to your SDK directory and
+run from the repository root:
+
+```sh
+bash ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest
+```
+
+Bash is used because the wrapper is not executable in the repository. This
+build check needs no device or card corpus. The app currently has no unit test
+sources, so `testDebugUnitTest` reports `NO-SOURCE`; a successful run verifies
+the debug build, not behavioral coverage.
+
+For runtime changes, describe relevant manual checks on supported hardware.
+Building the APK does not validate printing, camera, or other device behavior.
+
 ## Documentation
 
 | | |
