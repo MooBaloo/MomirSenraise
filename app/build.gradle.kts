@@ -6,20 +6,22 @@ plugins {
 android {
     namespace = "software.zeasy.momir"
     compileSdk = 34
+    ndkVersion = "26.1.10909125"
 
     defaultConfig {
         applicationId = "software.zeasy.momir"
-        // The Sunmi V2 ships Android 7.1.1. That is the whole reason this app is
-        // Views-and-Canvas rather than Compose: 909 MB of RAM on an armeabi-v7a
-        // chip does not enjoy a recomposition loop.
         minSdk = 25
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
+    }
+
+    externalNativeBuild {
+        ndkBuild { path = file("src/main/jni/Android.mk") }
     }
 
     buildFeatures {
-        aidl = true
         viewBinding = true
     }
 
@@ -42,6 +44,9 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 
     implementation("androidx.appcompat:appcompat:1.6.1")

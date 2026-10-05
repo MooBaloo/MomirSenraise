@@ -1,5 +1,9 @@
 # Data pipeline
 
+This pipeline is inherited from the upstream Sunmi app and is unchanged by the
+H10S printing port. Device-specific timing and memory figures below describe
+the upstream hardware, not H10S acceptance results.
+
 How Scryfall's bulk export becomes the offline card corpus, and which cards get
 in and why.
 

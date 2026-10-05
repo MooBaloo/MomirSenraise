@@ -36,7 +36,7 @@ import software.zeasy.momir.print.PrintResult
 import software.zeasy.momir.print.Raster
 import software.zeasy.momir.print.SlipContent
 import software.zeasy.momir.print.SlipRenderer
-import software.zeasy.momir.print.SunmiPrinter
+import software.zeasy.momir.print.H10sPrinter
 import software.zeasy.momir.sync.SyncService
 import java.text.NumberFormat
 import java.util.Locale
@@ -47,7 +47,7 @@ import kotlin.math.abs
  * slip.
  *
  * Everything expensive - the database query, the layout pass, the dither blit,
- * the Binder round-trip - happens off the main thread. On a 909 MB armeabi-v7a
+ * the UART operation - happens off the main thread. On a 909 MB armeabi-v7a
  * device that is the difference between a dial that spins and one that stutters
  * every time you print.
  */
@@ -57,7 +57,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var settings: Settings
     private lateinit var repository: CardRepository
     private lateinit var artPack: ArtPack
-    private lateinit var printer: SunmiPrinter
+    private lateinit var printer: H10sPrinter
 
     private val renderer = SlipRenderer()
 
@@ -108,7 +108,7 @@ class MainActivity : AppCompatActivity() {
         settings = Settings(this)
         repository = CardRepository(this)
         artPack = ArtPack(repository.artPackFile)
-        printer = SunmiPrinter(this)
+        printer = H10sPrinter()
 
         setUpCategorySelector()
         // Not written here: the dial reports every value a fling passes through,
@@ -133,7 +133,6 @@ class MainActivity : AppCompatActivity() {
                 if (repository.open()) artPack.open()
             }
             refreshCorpus()
-            printer.connect()
         }
     }
 
@@ -161,7 +160,6 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         resultHandler.removeCallbacks(hideResult)
         spinSyncButton(false)
-        printer.disconnect()
         artPack.close()
         repository.close()
     }
@@ -309,12 +307,8 @@ class MainActivity : AppCompatActivity() {
     // Printing
     // ------------------------------------------------------------------------
 
-    /**
-     * True once the AIDL service is bound. Binding can take up to eight seconds
-     * when the service is not there at all, which is precisely why this is asked
-     * before anything on screen commits to a card having been printed.
-     */
-    private suspend fun printerReady(): Boolean = printer.isConnected || printer.connect()
+    // Observational only: hardware is acquired by the serialized print job.
+    private fun printerReady(): Boolean = printer.isAvailable()
 
     private fun rollAndPrint() {
         val manaValue = binding.manaWheel.selectedValue ?: return
@@ -325,7 +319,7 @@ class MainActivity : AppCompatActivity() {
             // Ask the printer first. Everything below this line - the flash, the
             // colours on the rim, the band sweeping out of the top edge, the
             // card's name on the panel - says "that came out of the slot". Play
-            // all of it and *then* admit the service was never bound and the
+            // all of it and *then* admit the printer was unavailable and the
             // screen has told a lie for a second and a half.
             if (!printerReady()) {
                 binding.printButton.isBusy = false
@@ -422,7 +416,9 @@ class MainActivity : AppCompatActivity() {
         for (copy in 0 until settings.copies * times.coerceAtLeast(1)) {
             val result = printer.print(raster, settings.printFeedDots)
             if (result is PrintResult.Failure) {
-                failure = result.message
+                failure = result.message + if (result.jobStarted) {
+                    " A partial slip may have printed; check the paper before trying again."
+                } else ""
                 break
             }
         }
