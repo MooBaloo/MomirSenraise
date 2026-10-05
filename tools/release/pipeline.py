@@ -77,7 +77,26 @@ def current(channel, source):
     branch = "main" if channel == "stable" else "dev"
     state = api(f"branches/{branch}")
     require(state["protected"], f"{branch} must be protected")
-    require(state["commit"]["sha"] == source, "Source is no longer the channel branch head")
+    head = state["commit"]["sha"]
+    if head != source:
+        delta = api(f"compare/{source}...{head}")
+        files = delta.get("files")
+        require(delta["status"] == "ahead" and isinstance(files, list) and len(files) < 300,
+                "Cannot prove channel head is a documentation-only descendant")
+        require(not any(shipped(f["filename"]) or shipped(f.get("previous_filename", ""))
+                        for f in files), "Newer shipped changes supersede this source")
+
+
+def require_absent_tag(tag):
+    refs = api(f"git/matching-refs/tags/{tag}")
+    require(not any(ref["ref"] == f"refs/tags/{tag}" for ref in refs),
+            "Tag already exists; reconcile it before creating a release")
+
+
+def verify_release_tag(meta):
+    ref = api(f"git/ref/tags/{meta['tag']}")
+    require(ref["object"]["type"] == "commit" and ref["object"]["sha"] == meta["source"],
+            "Release tag does not point directly to the exact source")
 
 
 def check_new(meta, existing):
@@ -105,12 +124,13 @@ def plan(output):
         return  # Branch creation is not a release request.
     require(command("git", "rev-parse", "HEAD") == source, "Checkout mismatch")
     subprocess.run(["git", "merge-base", "--is-ancestor", before, source], check=True)
-    paths = command("git", "diff", "--name-only", before, source).splitlines()
+    paths = command("git", "diff", "--no-renames", "--name-only", before, source).splitlines()
     if not any(map(shipped, paths)):
         Path(output).write_text("enabled=false\n")
         return
     current(channel, source)
-    trusted = api("branches/main")["commit"]["sha"]
+    trusted = os.environ["TRUSTED_REVISION"]
+    require(SHA.fullmatch(trusted), "Invalid trusted revision")
     # GITHUB_TOKEN cannot create release tags at dev commits with workflow changes
     # relative to the default branch. Fail rather than request broader credentials.
     changed_workflows = command("git", "diff", "--name-only", trusted, source, "--", ".github/workflows")
@@ -128,9 +148,10 @@ def plan(output):
     code = allocate(int(os.environ["GITHUB_RUN_NUMBER"]), int(os.environ["GITHUB_RUN_ATTEMPT"]))
     meta = identity(channel, source, Path("release/version.txt").read_text().strip(), code)
     check_new(meta, releases())
+    require_absent_tag(meta["tag"])
     Path("build/release").mkdir(parents=True, exist_ok=True)
     Path("build/release/identity.json").write_text(json.dumps(meta, indent=2) + "\n")
-    Path(output).write_text(f"enabled=true\nchannel={channel}\ncode={code}\nsource={source}\ntrusted={trusted}\n")
+    Path(output).write_text(f"enabled=true\nchannel={channel}\ncode={code}\nsource={source}\n")
 
 
 def verify_apk(apk, meta, aapt):
@@ -222,6 +243,9 @@ def publish(directory):
     current(meta["channel"], meta["source"])
     existing = releases()
     check_new(meta, existing)
+    require_absent_tag(meta["tag"])
+    api("git/refs", "POST", dict(ref=f"refs/tags/{meta['tag']}", sha=meta["source"]))
+    verify_release_tag(meta)
     release = api("releases", "POST", dict(tag_name=meta["tag"], target_commitish=meta["source"],
                   name=meta["versionName"], body=release_body(meta), draft=True,
                   prerelease=meta["channel"] == "dev", make_latest="false"))
@@ -233,6 +257,7 @@ def publish(directory):
         digest = hashlib.sha256((directory / asset["name"]).read_bytes()).hexdigest()
         require(asset.get("digest") == f"sha256:{digest}" and asset["state"] == "uploaded", "Uploaded asset mismatch")
     current(meta["channel"], meta["source"])
+    verify_release_tag(meta)
     published = api(f"releases/{release['id']}", "PATCH", dict(draft=False,
                     make_latest="true" if meta["channel"] == "stable" else "false"))
     require(published.get("immutable") is True, "Release immutability is not enabled; publication setup is invalid")

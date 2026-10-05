@@ -61,15 +61,23 @@ Protected `dev` pushes build and sign development previews without routine manua
 approval. An approved, tested `dev` → `main` promotion authorizes automatic stable
 publication when shipped inputs change. There is no second release-approval button.
 Both paths run tests and build the unsigned release variant on GitHub-hosted
-runners. Signing uses a separate fresh runner and trusted tooling from `main`;
+runners. Planning runs reviewed tooling pinned from `main` on a separate runner,
+using
+Python isolated mode so source-branch modules cannot be imported. The unsigned
+build cannot select that trusted revision or provide privileged-job outputs.
+Signing uses a separate fresh runner and the same pinned tooling from `main`;
 only fixed Android tools run while the key is present. Publication uses another
 job with no signing secrets. PR CI has read-only repository access and no keys.
 
 Changes under packaged application sources, build/dependency configuration or
 `release/version.txt` trigger publication. Documentation/tests/workflow-only
-changes do not. Branch creation does not publish. A source that is no longer its
-channel head stops before publication. GitHub concurrency prevents simultaneous
-publication per channel; a queued newer run may supersede a pending run.
+changes do not. Branch creation does not publish. A newer shipped change
+supersedes an older source; a descendant containing
+only non-shipped changes may still publish the original approved source.
+Ambiguous or truncated comparisons stop publication. Only publication jobs
+enter the per-channel concurrency queue, so docs-only pushes cannot supersede
+pending application releases. A newer application publication may supersede a
+pending one; an in-flight publication is not cancelled.
 
 Immutable per-build prereleases hold development APKs and receipts. The public
 **Development preview** prerelease at tag `development` is a rolling index:
@@ -84,8 +92,10 @@ which allow note edits but prohibit moving tags or replacing assets. Stable
 Uploads first go to a draft release. All asset digests must match before the draft
 is published. A failure leaves the prior index intact and may leave a draft for
 inspection; do not delete or replace published assets to retry. An existing draft
-or tag deliberately blocks retries until maintainers reconcile the failed run.
-The workflow checks the resulting release's `immutable` status and stops on a
+or bare tag deliberately blocks retries until maintainers reconcile the failed run.
+The workflow rejects pre-existing build tags, creates the exact source tag,
+and verifies its target before uploading and before publishing. The workflow
+checks the resulting release's `immutable` status and stops on a
 misconfigured repository. This check does not undo publication: enabling and
 verifying repository immutability is a required setup gate, not an optional step.
 
@@ -101,7 +111,10 @@ workflow changes to `main` before publishing affected dev builds. See the
   stable version and allocation policy.
 - Create and protect `dev`; require PRs, passing build/tests, resolved reviews,
   and no force-push/deletion/bypass. Agree reviewer assignments for routine dev
-  integration. Protect `main` with maintainer/code-owner approval of the latest
+  integration. Require maintainer/code-owner review for release workflows and
+  tooling on both branches: the workflow definition itself is a privileged trust
+  boundary, even though source-branch planner code is never executed. Protect
+  `main` with maintainer/code-owner approval of the latest
   reviewed promotion and required tests. The workflow checks protected status
   and promotion approval, but does not configure or fully audit these rules.
 - Verify repository release immutability is enabled. The implementation review

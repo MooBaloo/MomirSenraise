@@ -67,11 +67,48 @@ class ReleaseGuards(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     p.verify_receipt(dict(meta, **{key: value}))
 
-    def test_current_branch_requires_protection_and_exact_head(self):
-        for state in [dict(protected=False, commit=dict(sha=SOURCE)),
-                      dict(protected=True, commit=dict(sha="c"*40))]:
-            with patch.object(p, "api", return_value=state), self.assertRaises(ValueError):
+    def test_current_branch_requires_protection_and_no_new_shipped_changes(self):
+        with patch.object(p, "api", return_value=dict(protected=False)), self.assertRaises(ValueError):
+            p.current("dev", SOURCE)
+        state = dict(protected=True, commit=dict(sha="c"*40))
+        with patch.object(p, "api", side_effect=[state, dict(status="ahead", files=[dict(filename="README.md")])]):
+            p.current("dev", SOURCE)  # A docs push cannot strand an in-flight application release.
+        for delta in [dict(status="diverged", files=[]), dict(status="ahead"),
+                      dict(status="ahead", files=[dict(filename="README.md")]*300),
+                      dict(status="ahead", files=[dict(filename="app/src/main/App.kt")]),
+                      dict(status="ahead", files=[dict(filename="docs/old.kt", previous_filename="app/src/main/App.kt")])]:
+            with patch.object(p, "api", side_effect=[state, delta]), self.assertRaises(ValueError):
                 p.current("dev", SOURCE)
+
+    def test_bare_existing_tags_and_wrong_source_are_rejected(self):
+        meta = self.meta()
+        with patch.object(p, "api", return_value=[dict(ref=f"refs/tags/{meta['tag']}")]), self.assertRaisesRegex(ValueError, "already exists"):
+            p.require_absent_tag(meta["tag"])
+        with patch.object(p, "api", return_value=[dict(ref=f"refs/tags/{meta['tag']}-other")]):
+            p.require_absent_tag(meta["tag"])
+        for obj in [dict(type="commit", sha="c"*40), dict(type="tag", sha=SOURCE)]:
+            with patch.object(p, "api", return_value=dict(object=obj)), self.assertRaises(ValueError):
+                p.verify_release_tag(meta)
+        with patch.object(p, "api", return_value=dict(object=dict(type="commit", sha=SOURCE))):
+            p.verify_release_tag(meta)
+
+    def test_rename_out_of_packaged_tree_is_a_shipped_change(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as temp:
+            def git(*args):
+                return subprocess.check_output(["git", "-C", temp, *args], text=True).strip()
+            git("init", "-q")
+            app = Path(temp)/"app/src/main/assets/card.txt"
+            app.parent.mkdir(parents=True)
+            app.write_text("card fixture")
+            git("add", ".")
+            git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "fixture")
+            before = git("rev-parse", "HEAD")
+            (Path(temp)/"docs").mkdir()
+            git("mv", "app/src/main/assets/card.txt", "docs/card.txt")
+            git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "move")
+            paths = git("diff", "--no-renames", "--name-only", before, "HEAD").splitlines()
+            self.assertTrue(any(map(p.shipped, paths)))
 
     def test_apk_metadata_and_embedded_source(self):
         meta = self.meta()
@@ -96,7 +133,7 @@ class ReleaseGuards(unittest.TestCase):
             event = Path(temp)/"event.json"
             event.write_text(json.dumps(dict(after=SOURCE, before="c"*40)))
             out = Path(temp)/"output"
-            env = dict(GITHUB_REPOSITORY=p.REPOSITORY, GITHUB_REF="refs/heads/main", GITHUB_EVENT_PATH=str(event))
+            env = dict(GITHUB_REPOSITORY=p.REPOSITORY, GITHUB_REF="refs/heads/main", GITHUB_EVENT_PATH=str(event), TRUSTED_REVISION=SOURCE)
             with patch.dict(os.environ, env), patch.object(p, "command", side_effect=[SOURCE, "README.md\n"]), \
                  patch.object(p.subprocess, "run"), patch.object(p, "api") as remote:
                 p.plan(out)
@@ -107,10 +144,10 @@ class ReleaseGuards(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             event = Path(temp)/"event.json"
             event.write_text(json.dumps(dict(after=SOURCE, before="c"*40)))
-            env = dict(GITHUB_REPOSITORY=p.REPOSITORY, GITHUB_REF="refs/heads/main", GITHUB_EVENT_PATH=str(event))
+            env = dict(GITHUB_REPOSITORY=p.REPOSITORY, GITHUB_REF="refs/heads/main", GITHUB_EVENT_PATH=str(event), TRUSTED_REVISION=SOURCE)
             with patch.dict(os.environ, env), patch.object(p, "command", side_effect=[SOURCE, "app/src/main/App.kt", ""]), \
                  patch.object(p.subprocess, "run"), patch.object(p, "current"), \
-                 patch.object(p, "api", side_effect=[dict(commit=dict(sha=SOURCE)), []]):
+                 patch.object(p, "api", return_value=[]):
                 with self.assertRaisesRegex(ValueError, "promotion"):
                     p.plan(Path(temp)/"output")
 
@@ -118,7 +155,7 @@ class ReleaseGuards(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             event = Path(temp)/"event.json"
             event.write_text(json.dumps(dict(after=SOURCE, before="c"*40)))
-            env = dict(GITHUB_REPOSITORY=p.REPOSITORY, GITHUB_REF="refs/heads/dev", GITHUB_EVENT_PATH=str(event))
+            env = dict(GITHUB_REPOSITORY=p.REPOSITORY, GITHUB_REF="refs/heads/dev", GITHUB_EVENT_PATH=str(event), TRUSTED_REVISION=SOURCE)
             with patch.dict(os.environ, env), patch.object(p, "command", side_effect=[SOURCE, "app/src/main/App.kt", ".github/workflows/build.yml"]), \
                  patch.object(p.subprocess, "run"), patch.object(p, "current"), \
                  patch.object(p, "api", return_value=dict(commit=dict(sha=SOURCE))):
@@ -156,6 +193,12 @@ class ReleaseGuards(unittest.TestCase):
 
         def api(path, method="GET", data=None):
             calls.append((path, method, data))
+            if path == "git/refs" and method == "POST":
+                return {}
+            if path.startswith("git/matching-refs/tags/"):
+                return []
+            if path.startswith("git/ref/tags/"):
+                return dict(object=dict(type="commit", sha=SOURCE))
             if path == "releases" and method == "POST":
                 return dict(id=1)
             if path == "releases/1" and method == "GET":
@@ -187,7 +230,8 @@ class ReleaseGuards(unittest.TestCase):
         calls = self.publication()
         self.assertEqual(calls[-1][:2], ("releases/2", "PATCH"))
         self.assertEqual(set(calls[-1][2]), {"body"})  # Never moves/replaces tag or assets.
-        self.assertEqual(calls[-2][2]["draft"], False)
+        self.assertTrue(any(path == "releases/1" and method == "PATCH" and data["draft"] is False
+                            for path, method, data in calls))
         self.assertIn("Download APK", calls[-1][2]["body"])
 
     def test_failed_asset_upload_preserves_previous_public_preview(self):
