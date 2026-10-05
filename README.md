@@ -144,7 +144,7 @@ That is the number. The default is 12 mm; the layout gets what is left of the
 For contributions to this fork, start a focused branch from `main` and open a
 pull request here. Include validation results and any remaining limitations.
 
-See the [release strategy](docs/release-strategy.md) for the agreed migration,
+See the [release strategy](docs/release-strategy.md) for the planned migration,
 signing and release direction. Its planned `dev` setup is not yet implemented;
 the contribution instructions above apply until that setup is complete.
 
