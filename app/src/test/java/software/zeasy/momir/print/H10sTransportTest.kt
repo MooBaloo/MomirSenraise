@@ -8,7 +8,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class H10sTransportTest {
     private class FakeIo : H10sIo {
-        val events = mutableListOf<String>()
+        val events = java.util.Collections.synchronizedList(mutableListOf<String>())
         val accepted = mutableListOf<Byte>()
         var openResult = 42
         var closeResult = 0
@@ -260,5 +260,30 @@ class H10sTransportTest {
         assertEquals(PrinterJobOutcome.FAILED, printer.jobStatus!!.outcome)
         advanceTimeBy(5_001); runCurrent()
         assertEquals(1, io.events.count { it == "close" })
+    }
+
+    @Test fun `stalled terminal sink does not hold the hardware release mutex`() = runBlocking {
+        val io = FakeIo()
+        val processScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val logging = CompletableDeferred<Unit>()
+        val unblock = java.util.concurrent.CountDownLatch(1)
+        val printer = H10sTransport(io, processScope, Dispatchers.IO, idleMs = 20,
+            onTerminal = {
+                logging.complete(Unit)
+                unblock.await(5, java.util.concurrent.TimeUnit.SECONDS)
+            })
+        val caller = async(Dispatchers.IO) { printer.print(byteArrayOf(1)) }
+        try {
+            withTimeout(3_000) { logging.await() }
+            withTimeout(3_000) {
+                while (!io.events.contains("close")) delay(5)
+            }
+            assertFalse("The diagnostic sink is still blocked", caller.isCompleted)
+            assertEquals(PrinterJobOutcome.SUCCEEDED, printer.jobStatus!!.outcome)
+        } finally {
+            unblock.countDown()
+            caller.await()
+            processScope.cancel()
+        }
     }
 }

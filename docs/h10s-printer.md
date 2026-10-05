@@ -52,7 +52,8 @@ connection state. Idle cleanup never erases the terminal outcome. These values
 reset on process restart and are not stored on disk. A job cancelled while
 waiting for the mutex has not been admitted and does not receive a number.
 
-Record the previous number before a test and require a new terminal result for
+Settings is a snapshot: close and reopen it after the test to refresh these
+fields. Record the previous number before a test and require a new terminal result for
 that test. `state: not connected` alone proves neither success nor failure.
 Logcat tag `H10sPrinter` also emits one terminal line, for example
 `Print job 1: SUCCEEDED`, without card content, raster bytes or device identifiers.

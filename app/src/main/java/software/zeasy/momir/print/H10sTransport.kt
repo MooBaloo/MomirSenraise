@@ -50,34 +50,38 @@ internal class H10sTransport(
     fun isAvailable(): Boolean = io.available() // Never opens or powers hardware.
 
     suspend fun print(payload: ByteArray): PrintResult = withContext(dispatcher) {
-        gate.withLock {
-            val id = ++nextJobId
-            jobStatus = PrinterJobStatus(id, PrinterJobOutcome.RUNNING)
-            try {
-                val result = printLocked(payload)
-                recordTerminal(PrinterJobStatus(id,
-                    if (result is PrintResult.Success) PrinterJobOutcome.SUCCEEDED else PrinterJobOutcome.FAILED,
-                    (result as? PrintResult.Failure)?.let {
-                        it.message + if (it.jobStarted) "; output may be partial" else ""
-                    }.orEmpty(),
-                ))
-                result
-            } catch (cancelled: CancellationException) {
-                recordTerminal(PrinterJobStatus(id, PrinterJobOutcome.CANCELLED,
-                    "Output may be partial; check paper before trying again"))
-                throw cancelled
-            } catch (error: Exception) {
-                val message = error.message ?: "Printer operation failed"
-                recordTerminal(PrinterJobStatus(id, PrinterJobOutcome.FAILED, message))
-                PrintResult.Failure(message)
-            }
+        var terminal: PrinterJobStatus? = null
+        fun record(status: PrinterJobStatus) {
+            jobStatus = status
+            terminal = status
         }
-    }
-
-    private fun recordTerminal(status: PrinterJobStatus) {
-        jobStatus = status
-        // Diagnostics cannot change the result or prevent already-scheduled cleanup.
-        runCatching { onTerminal(status) }
+        try {
+            gate.withLock {
+                val id = ++nextJobId
+                jobStatus = PrinterJobStatus(id, PrinterJobOutcome.RUNNING)
+                try {
+                    val result = printLocked(payload)
+                    record(PrinterJobStatus(id,
+                        if (result is PrintResult.Success) PrinterJobOutcome.SUCCEEDED else PrinterJobOutcome.FAILED,
+                        (result as? PrintResult.Failure)?.let {
+                            it.message + if (it.jobStarted) "; output may be partial" else ""
+                        }.orEmpty(),
+                    ))
+                    result
+                } catch (cancelled: CancellationException) {
+                    record(PrinterJobStatus(id, PrinterJobOutcome.CANCELLED,
+                        "Output may be partial; check paper before trying again"))
+                    throw cancelled
+                } catch (error: Exception) {
+                    val message = error.message ?: "Printer operation failed"
+                    record(PrinterJobStatus(id, PrinterJobOutcome.FAILED, message))
+                    PrintResult.Failure(message)
+                }
+            }
+        } finally {
+            // Outside gate: even a stalled sink must not hold up hardware release.
+            terminal?.let { runCatching { onTerminal(it) } }
+        }
     }
 
     /** Caller holds the job gate. Idle cleanup never resets jobStatus. */
