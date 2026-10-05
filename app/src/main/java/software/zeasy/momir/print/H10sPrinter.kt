@@ -1,5 +1,6 @@
 package software.zeasy.momir.print
 
+import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 
@@ -15,12 +16,20 @@ class H10sPrinter {
         EscPos.initialise() + EscPos.align(0) +
             EscPos.raster(raster.bytes, raster.height) + EscPos.feedDots(feedDots),
     )
-    fun diagnostics(): Map<String, String> = mapOf(
-        "backend" to "H10S direct UART", "state" to transport.detail,
-    )
+    fun diagnostics(): Map<String, String> {
+        val job = transport.jobStatus
+        return mapOf(
+            "backend" to "H10S direct UART", "state" to transport.detail,
+            "lastJob" to (job?.let { "${it.id}: ${it.outcome}" } ?: "none"),
+            "lastJobDetail" to (job?.detail ?: ""),
+        )
+    }
 
     private companion object {
-        val transport = H10sTransport(H10sDeviceIo())
+        val transport = H10sTransport(H10sDeviceIo(), onTerminal = {
+            // No card content, raster bytes, device identifiers or exception text.
+            Log.i("H10sPrinter", "Print job ${it.id}: ${it.outcome}")
+        })
     }
 }
 

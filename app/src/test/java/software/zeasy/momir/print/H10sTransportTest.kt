@@ -200,4 +200,65 @@ class H10sTransportTest {
         advanceTimeBy(5_001); runCurrent()
         assertEquals(1, io.events.count { it == "close" })
     }
+
+    @Test fun `terminal success survives idle cleanup and next job gets a new identity`() = runTest {
+        val io = FakeIo()
+        val outcomes = mutableListOf<PrinterJobStatus>()
+        val printer = H10sTransport(io, backgroundScope, StandardTestDispatcher(testScheduler),
+            onTerminal = { outcomes += it })
+        assertNull(printer.jobStatus)
+        assertEquals(PrintResult.Success, printer.print(byteArrayOf(1)))
+        val first = printer.jobStatus!!
+        assertEquals(PrinterJobOutcome.SUCCEEDED, first.outcome)
+        advanceTimeBy(5_001); runCurrent()
+        assertEquals("not connected", printer.detail)
+        assertEquals(first, printer.jobStatus)
+        val next = async { printer.print(byteArrayOf(2)) }
+        runCurrent()
+        assertEquals(PrinterJobOutcome.RUNNING, printer.jobStatus!!.outcome)
+        assertEquals(first.id + 1, printer.jobStatus!!.id)
+        assertEquals(PrintResult.Success, next.await())
+        assertEquals(listOf(first.id, first.id + 1), outcomes.map { it.id })
+        assertTrue(outcomes.all { it.outcome == PrinterJobOutcome.SUCCEEDED })
+    }
+
+    @Test fun `terminal partial failure remains visible after state becomes idle`() = runTest {
+        val io = FakeIo().apply { failAfter = 3 }
+        val outcomes = mutableListOf<PrinterJobStatus>()
+        val printer = H10sTransport(io, backgroundScope, StandardTestDispatcher(testScheduler),
+            onTerminal = { outcomes += it })
+        assertTrue(printer.print(byteArrayOf(1,2,3,4)) is PrintResult.Failure)
+        advanceTimeBy(5_001); runCurrent()
+        assertEquals("not connected", printer.detail)
+        assertEquals(PrinterJobOutcome.FAILED, printer.jobStatus!!.outcome)
+        assertTrue(printer.jobStatus!!.detail.contains("UART write failed"))
+        assertTrue(printer.jobStatus!!.detail.contains("partial"))
+        assertEquals(listOf(printer.jobStatus), outcomes)
+    }
+
+    @Test fun `cancellation is recorded once and preserved through cleanup`() = runTest {
+        val io = FakeIo()
+        val outcomes = mutableListOf<PrinterJobStatus>()
+        val printer = H10sTransport(io, backgroundScope, StandardTestDispatcher(testScheduler),
+            onTerminal = { outcomes += it })
+        val job = launch(start = CoroutineStart.LAZY) { printer.print(ByteArray(700) { 1 }) }
+        io.afterWrite = { job.cancel() }
+        job.start(); job.join()
+        advanceTimeBy(5_001); runCurrent()
+        assertEquals("not connected", printer.detail)
+        assertEquals(PrinterJobOutcome.CANCELLED, printer.jobStatus!!.outcome)
+        assertEquals(1, outcomes.size)
+    }
+
+    @Test fun `rejected jobs replace old success and diagnostic sink cannot break cleanup`() = runTest {
+        val io = FakeIo()
+        val printer = H10sTransport(io, backgroundScope, StandardTestDispatcher(testScheduler),
+            onTerminal = { error("diagnostic sink unavailable") })
+        assertEquals(PrintResult.Success, printer.print(byteArrayOf(1)))
+        assertTrue(printer.print(byteArrayOf()) is PrintResult.Failure)
+        assertEquals(2L, printer.jobStatus!!.id)
+        assertEquals(PrinterJobOutcome.FAILED, printer.jobStatus!!.outcome)
+        advanceTimeBy(5_001); runCurrent()
+        assertEquals(1, io.events.count { it == "close" })
+    }
 }

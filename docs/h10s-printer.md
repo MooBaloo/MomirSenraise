@@ -44,6 +44,21 @@ finished printing. Long/dense slips and flow-control stalls require physical
 validation. This is not a background print service: Android process death is
 outside the graceful cleanup contract, and no interrupted job is persisted.
 
+## Observing a test job
+
+Settings diagnostics retain `lastJob` (a process-local sequence number and
+RUNNING/SUCCEEDED/FAILED/CANCELLED) and `lastJobDetail` independently of the idle
+connection state. Idle cleanup never erases the terminal outcome. These values
+reset on process restart and are not stored on disk. A job cancelled while
+waiting for the mutex has not been admitted and does not receive a number.
+
+Record the previous number before a test and require a new terminal result for
+that test. `state: not connected` alone proves neither success nor failure.
+Logcat tag `H10sPrinter` also emits one terminal line, for example
+`Print job 1: SUCCEEDED`, without card content, raster bytes or device identifiers.
+Success means transmission, bounded drain and status checks passed; it does not
+prove paper appearance or physical completion. Record visual inspection separately.
+
 ## Validation
 
 JVM tests use fake I/O and virtual time for serialization, cancellation, partial

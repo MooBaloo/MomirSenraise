@@ -15,18 +15,31 @@ internal interface H10sIo {
     fun control(index: Int, enabled: Boolean)
 }
 
+internal enum class PrinterJobOutcome { RUNNING, SUCCEEDED, FAILED, CANCELLED }
+
+/** In-memory diagnostic for the most recently admitted job; contains no card data. */
+internal data class PrinterJobStatus(
+    val id: Long,
+    val outcome: PrinterJobOutcome,
+    val detail: String = "",
+)
+
 /** Serializes entire slips and cleanup. A failed/cancelled slip is never replayed. */
 internal class H10sTransport(
     private val io: H10sIo,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val idleMs: Long = 5_000,
+    private val onTerminal: (PrinterJobStatus) -> Unit = {},
 ) {
     private val gate = Mutex()
     private var fd = -1
     private var reader: Job? = null
     private var idle: Job? = null
     private var generation = 0L
+    private var nextJobId = 0L
+    @Volatile var jobStatus: PrinterJobStatus? = null
+        private set
     private var closeUncertain = false
     private var needsRecovery = false
     @Volatile private var status: H10sPrinterStatus? = null
@@ -38,48 +51,78 @@ internal class H10sTransport(
 
     suspend fun print(payload: ByteArray): PrintResult = withContext(dispatcher) {
         gate.withLock {
-            if (payload.isEmpty()) return@withLock PrintResult.Failure("Empty print job")
-            if (closeUncertain) return@withLock PrintResult.Failure("UART close uncertain; restart required")
-            if (needsRecovery) return@withLock PrintResult.Failure("Printer recovering; wait five seconds before a new job")
-            if (!isAvailable()) return@withLock PrintResult.Failure("H10S printer hardware unavailable")
-            generation++
-            idle?.cancel()
-            idle = null
-            var sent = 0
-            var success = false
+            val id = ++nextJobId
+            jobStatus = PrinterJobStatus(id, PrinterJobOutcome.RUNNING)
             try {
-                currentCoroutineContext().ensureActive()
-                if (fd < 0) acquire()
-                currentCoroutineContext().ensureActive()
-                checkStatus()
-                while (sent < payload.size) {
-                    currentCoroutineContext().ensureActive()
-                    checkStatus()
-                    val length = minOf(256, payload.size - sent)
-                    val written = io.write(fd, payload, sent, length)
-                    check(written in 1..length) { "UART write failed ($written)" }
-                    sent += written
-                    delay(10) // Pace the MCU and observe cancellation between writes.
-                }
-                checkStatus()
-                val drained = io.drain(fd)
-                check(drained == 0) { "UART drain failed ($drained)" }
-                delay(100)
-                checkStatus()
-                success = true
-                detail = "ready"
-                PrintResult.Success
+                val result = printLocked(payload)
+                recordTerminal(PrinterJobStatus(id,
+                    if (result is PrintResult.Success) PrinterJobOutcome.SUCCEEDED else PrinterJobOutcome.FAILED,
+                    (result as? PrintResult.Failure)?.let {
+                        it.message + if (it.jobStarted) "; output may be partial" else ""
+                    }.orEmpty(),
+                ))
+                result
             } catch (cancelled: CancellationException) {
-                detail = "Print cancelled; output may be partial"
+                recordTerminal(PrinterJobStatus(id, PrinterJobOutcome.CANCELLED,
+                    "Output may be partial; check paper before trying again"))
                 throw cancelled
             } catch (error: Exception) {
-                detail = error.message ?: "Printer operation failed"
-                PrintResult.Failure(detail, jobStarted = sent > 0)
-            } finally {
-                if (fd >= 0) {
-                    needsRecovery = !success
-                    scheduleRelease()
-                }
+                val message = error.message ?: "Printer operation failed"
+                recordTerminal(PrinterJobStatus(id, PrinterJobOutcome.FAILED, message))
+                PrintResult.Failure(message)
+            }
+        }
+    }
+
+    private fun recordTerminal(status: PrinterJobStatus) {
+        jobStatus = status
+        // Diagnostics cannot change the result or prevent already-scheduled cleanup.
+        runCatching { onTerminal(status) }
+    }
+
+    /** Caller holds the job gate. Idle cleanup never resets jobStatus. */
+    private suspend fun printLocked(payload: ByteArray): PrintResult {
+        if (payload.isEmpty()) return PrintResult.Failure("Empty print job")
+        if (closeUncertain) return PrintResult.Failure("UART close uncertain; restart required")
+        if (needsRecovery) return PrintResult.Failure("Printer recovering; wait five seconds before a new job")
+        if (!isAvailable()) return PrintResult.Failure("H10S printer hardware unavailable")
+        generation++
+        idle?.cancel()
+        idle = null
+        var sent = 0
+        var success = false
+        return try {
+            currentCoroutineContext().ensureActive()
+            if (fd < 0) acquire()
+            currentCoroutineContext().ensureActive()
+            checkStatus()
+            while (sent < payload.size) {
+                currentCoroutineContext().ensureActive()
+                checkStatus()
+                val length = minOf(256, payload.size - sent)
+                val written = io.write(fd, payload, sent, length)
+                check(written in 1..length) { "UART write failed ($written)" }
+                sent += written
+                delay(10) // Pace the MCU and observe cancellation between writes.
+            }
+            checkStatus()
+            val drained = io.drain(fd)
+            check(drained == 0) { "UART drain failed ($drained)" }
+            delay(100)
+            checkStatus()
+            success = true
+            detail = "ready"
+            PrintResult.Success
+        } catch (cancelled: CancellationException) {
+            detail = "Print cancelled; output may be partial"
+            throw cancelled
+        } catch (error: Exception) {
+            detail = error.message ?: "Printer operation failed"
+            PrintResult.Failure(detail, jobStarted = sent > 0)
+        } finally {
+            if (fd >= 0) {
+                needsRecovery = !success
+                scheduleRelease()
             }
         }
     }

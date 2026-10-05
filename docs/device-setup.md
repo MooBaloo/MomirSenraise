@@ -29,7 +29,10 @@ of this printing change.
 ## Physical acceptance checklist
 
 On a separately authorized candidate installation, record the exact commit and
-APK identity, device model/firmware, access readiness, and results:
+APK identity, device model/firmware, access readiness, and results. Capture the
+previous `lastJob` number, then the new terminal outcome and `lastJobDetail`
+after the test; preserve the matching `H10sPrinter` terminal log. An idle
+`not connected` state alone is not a result:
 
 - Print a calibration slip; measure the head-to-tear distance, foot margin,
   width and total length. The inherited 12 mm/5 mm defaults are not H10S measurements.
