@@ -2,6 +2,10 @@
 
 Builds the offline card corpus for MomirSenraise. Stdlib plus Pillow, nothing else.
 
+Counts, output sizes and timings in this guide describe a historical upstream
+sample. They vary with the corpus, host and network, and are not H10S
+performance measurements. Run `stats` and inspect the files for your build.
+
 ```bash
 pip install Pillow
 

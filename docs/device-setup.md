@@ -38,11 +38,17 @@ From `tools/momirdeck/`, the transfer command is:
 python momirdeck.py push --package 'YOUR.APPLICATION.ID'
 ```
 
-Replace the placeholder with the verified package. The command writes both
-files under `/sdcard/Android/data/<verified-application-id>/files/`; do not
-assume a different build channel or an existing installation shares that path.
-Check the app’s Settings diagnostics for corpus counts. An empty category may
-mean the corpus contains no cards of that type.
+Replace the placeholder with the verified package. The command transfers the
+output files that exist to `/sdcard/Android/data/<verified-application-id>/files/`.
+Confirm both `momir.db` and `art.pack` were built for a complete corpus, and
+check the transfer output for `skip ... (missing)` messages: `Done` alone does
+not prove both files were transferred. Do not assume another build channel or
+existing installation shares that path.
+
+Close the app completely and reopen it after transfer; the database is opened
+at activity creation, and opening Settings alone does not retry loading it.
+Then check Settings diagnostics for corpus counts before trying a preview. An
+empty category may mean the corpus contains no cards of that type.
 
 Long-press PRINT to render `preview.png` in the app’s files directory without
 sending a printer job. A good preview checks layout, not UART operation or

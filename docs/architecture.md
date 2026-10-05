@@ -25,8 +25,9 @@
 
 There is no server. The diagram’s file sizes are sample corpus figures. The
 PC-side builder prepares the corpus before transfer; the inherited on-device
-resync can also populate it over WiFi, subject to device storage and runtime
-validation.
+resync updates an already-pushed corpus over WiFi, subject to device storage
+and runtime validation. It cannot bootstrap a fresh installation without
+`momir.db`; prepare and transfer the initial corpus from a PC.
 
 ## Hardware scope
 
