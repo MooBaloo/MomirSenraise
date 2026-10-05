@@ -20,6 +20,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import software.zeasy.momir.BuildConfig
 import software.zeasy.momir.R
 import software.zeasy.momir.Settings
 import software.zeasy.momir.data.ArtPack
@@ -778,15 +779,29 @@ class MainActivity : AppCompatActivity() {
 
         // The heading lives in the layout, in the same serif the rest of the app
         // uses; an AlertDialog title would come out in the platform sans.
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setView(view.root)
+            .setNeutralButton(R.string.about, null)
             .setPositiveButton(R.string.close) { _, _ ->
                 settings.copies = view.copiesSeek.progress + 1
                 settings.slipLengthMm = view.slipSeek.progress + SLIP_MIN_MM
                 settings.tearGapMm = view.feedSeek.progress.toFloat()
                 settings.bottomMarginMm = view.bottomMarginSeek.progress.toFloat()
             }
-            .show()
+            .create()
+        dialog.setOnShowListener {
+            // Override the default button listener so About does not dismiss
+            // Settings or discard seek-bar changes waiting for Close.
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.about)
+                    .setMessage(getString(R.string.about_build, BuildConfig.VERSION_NAME,
+                        BuildConfig.VERSION_CODE, BuildConfig.BUILD_CHANNEL, BuildConfig.SOURCE_REVISION))
+                    .setPositiveButton(R.string.close, null)
+                    .show()
+            }
+        }
+        dialog.show()
     }
 
     private fun buildDiagnostics(): String {

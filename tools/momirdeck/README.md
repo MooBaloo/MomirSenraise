@@ -83,7 +83,7 @@ and clear the offsets if you want to re-dither everything.
 ### `push`
 
 `adb push` of both files to
-`/sdcard/Android/data/software.zeasy.momir/files/`. Finds `adb` on `PATH` or in
+`/sdcard/Android/data/io.github.moobaloo.momir.dev.debug/files/`. Finds `adb` on `PATH` or in
 the usual SDK locations; `--adb` overrides.
 
 ## Global options

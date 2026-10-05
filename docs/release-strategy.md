@@ -1,72 +1,70 @@
 # Release strategy
 
-Source integration, release publication and installation are separate decisions.
-A merged pull request does not publish or deploy an application. This strategy
-sets release requirements; it does not configure signing or authorize changes
-to an installation.
+Build and signing run on GitHub-hosted infrastructure. `dev` is the enduring
+integration branch; `main` is the stable release branch. Installation remains a
+separate decision from source integration and artifact publication.
 
-## Identity, channels and versions
+## Channels and versions
 
-Preserve the established application ID and signing identity when updating an
-existing release. Verify the signing path and expected certificate before
-preparing release artifacts. Keep signing keys outside the repository and
-ordinary pull-request CI.
+Stable and development builds use distinct application IDs and distinct signing
+keys. Development builds are labelled **Momir Dev**, with no version or source
+revision in the launcher name. About shows the full version, versionCode and
+exact built commit; App info exposes the versionName. Preserve each channel's
+package and signing identity after first publication. Keep keys outside source
+control and ordinary pull-request CI.
 
-Use a separate application ID and data storage for development builds. Debug
-APKs support testing and are not release artifacts. Release candidates use
-release settings and undergo the same identity and signing verification as final
-releases. Changing package identity does not transfer data or device privileges.
-See Android's [application identity](https://developer.android.com/build/configure-app-module)
-and [signing](https://developer.android.com/studio/publish/app-signing) guidance.
+Use a monotonic versionCode independent of the source SHA. Allocate a new code
+for each distributed build, including retries and recovery builds; never reuse
+a published code. Stable versions use X.Y.Z, initially in the 0.x.y series.
+Development versions identify the build and source. Concrete identities and the
+allocation mechanism are specified in [Builds and signing](builds-and-signing.md).
+See Android's [identity](https://developer.android.com/build/configure-app-module),
+[signing](https://developer.android.com/studio/publish/app-signing) and
+[versioning](https://developer.android.com/studio/publish/versioning) guidance.
 
-Maintain a versionCode allocation record. Each newly distributed release-channel
-APK, including candidates and recovery builds, receives the next unused code
-above previously allocated codes. Use `0.x.y` version names until product
-stability, `-rc.N` for release candidates and source revision labels for development
-builds. A final release following a candidate receives a higher versionCode.
-See [Android versioning](https://developer.android.com/studio/publish/versioning).
+## Review and release authorization
 
-## Review and acceptance
+Feature PRs integrate into protected `dev` after required review and tests.
+Record exact source and artifact identity, CI, relevant security assessment and
+manual results. Keep the promotion candidate fixed during acceptance and repeat
+affected checks after changes. Validate combined application behavior relevant
+to a release; a calibration print alone is not full application acceptance.
 
-Follow the repository's contribution instructions and protected-branch rules.
-Record the exact reviewed commit, passing CI, independent review, security
-assessment where relevant and applicable manual results. Resolve findings and
-obtain required approvals before merging; refresh affected evidence after changes.
-
-Before a release, agree its scope and acceptance criteria and hold the candidate
-fixed during review. Validate the combined application behavior affected by the
-release, including relevant card loading, rendering and printing. A calibration
-print alone does not establish full application acceptance. Record limitations
-and untested paths explicitly. Automated checks cannot replace relevant hardware
-tests, and debug-build acceptance does not validate different release bytes.
-
-This strategy does not select a permanent integration-branch model. Direct feature
-PRs and staged promotion can both support these gates; contributors should follow
-the current README rather than infer new branch rules. See [GitHub flow](https://docs.github.com/en/get-started/using-github/github-flow)
-and [protected-branch rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
+A maintainer-approved, tested `dev` → `main` promotion authorizes automatic
+stable signed and verified publication for shipped application changes, including
+code, resources and dependencies. There is no second release-approval button.
+Documentation-only changes do not publish an APK. Development pushes publish
+signed previews automatically without routine maintainer approval of each build.
+Repository protections still govern source integration.
 
 ## Publication and traceability
 
-Select an accepted `main` commit, build a non-debuggable APK and sign through the
-approved release process. Verify its signature, package, versions and acceptance
-before publication. Publish deliberately with a matching `v<versionName>` tag,
-full source commit, package/versionCode, certificate fingerprint, APK SHA-256,
-changes, acceptance results and known limits. Preserve published tags and
-artifacts. Publication does not trigger installation; no automatic deployment
-is planned. See [GitHub releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases).
+Build without signing credentials, sign in an isolated job, then independently
+verify the APK identity, certificate and checksums before publication. Stable
+releases use immutable version tags and assets. Record the exact commit,
+version/code, package, certificate fingerprint, APK SHA-256 and validation limits.
+Do not replace published stable artifacts.
 
-## Test installations and recovery
+The public **Development preview** channel provides a coherent latest-build entry
+point with exact source/version/checksum evidence. Its proposed implementation
+uses an index linking to immutable per-build prereleases; see the setup decisions
+in [Builds and signing](builds-and-signing.md). Upload and verify a complete new
+build before changing the index. Failed or stale runs must not replace it.
+[GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
+protect tags/assets while permitting release-note updates.
 
-When a build is installed for manual review, identify its exact artifact and
-record who will approve its replacement or removal. Retain the build, test data
-and evidence through review and after merge until that approval is given.
-Merging is not an instruction to uninstall a test build or restore an earlier
-installation. Keep release artifacts and acceptance evidence available for
-verification and recovery.
+## Installation and recovery
 
-Before updating an installation, validate package/signer and data/schema
-compatibility and, where applicable, Device Owner component continuity. Establish
-an approved recovery plan. Retain prior artifacts but prefer compatible
-higher-code forward recovery: Android normally blocks downgrades, source
-reversion cannot undo data migration, and uninstall/reinstall must not be assumed
-to preserve data or device management.
+Publication does not install or deploy an application. When a build is installed
+for review, identify its artifact and who approves replacement or removal. Keep
+it and its data through approval and after merge until that approval is given.
+Retain artifacts and evidence for verification and recovery.
+
+Before updating an installation, verify channel identity, data/schema compatibility
+and applicable device-management continuity. Establish an approved recovery plan.
+Prefer a compatible higher-code forward recovery; source reversion cannot undo
+data changes and uninstall/reinstall must not be assumed to preserve state.
+
+The publishing workflow remains disabled until signing custody, branch and
+environment restrictions, tag rules and release immutability have been verified.
+This document and the foundation code do not configure those settings.

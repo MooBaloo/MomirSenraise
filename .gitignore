@@ -10,7 +10,8 @@ captures/
 *.apk
 *.aab
 *.keystore
-!debug.keystore
+*.jks
+*.p12
 
 # momirdeck output - the corpus is ~230 MB of derived data, rebuild it instead
 tools/momirdeck/out/
