@@ -75,16 +75,16 @@ cd tools/momirdeck
 python momirdeck.py push
 ```
 
-That is `adb push` to `/sdcard/Android/data/software.zeasy.momir/files/`. An
+That is `adb push` to `/sdcard/Android/data/io.github.moobaloo.momir.dev.debug/files/`. An
 app always owns its external files directory, so no runtime permission is
 involved. Pushing the 427 MB corpus takes about half a minute over USB 2.
 
 The app picks the files up on next launch. To do it by hand:
 
 ```bash
-adb shell mkdir -p /sdcard/Android/data/software.zeasy.momir/files
-adb push out/momir.db  /sdcard/Android/data/software.zeasy.momir/files/
-adb push out/art.pack  /sdcard/Android/data/software.zeasy.momir/files/
+adb shell mkdir -p /sdcard/Android/data/io.github.moobaloo.momir.dev.debug/files
+adb push out/momir.db  /sdcard/Android/data/io.github.moobaloo.momir.dev.debug/files/
+adb push out/art.pack  /sdcard/Android/data/io.github.moobaloo.momir.dev.debug/files/
 ```
 
 ## Calibrating the paper geometry
@@ -109,7 +109,7 @@ test.
 **"No card data on this device".** The corpus is not where the app looks.
 
 ```bash
-adb shell ls -la /sdcard/Android/data/software.zeasy.momir/files/
+adb shell ls -la /sdcard/Android/data/io.github.moobaloo.momir.dev.debug/files/
 ```
 
 **Nothing prints and no error appears.** Check that the service is bound:
@@ -140,7 +140,7 @@ adb logcat -s ScryfallSync
 first time. If it was denied:
 
 ```bash
-adb shell pm grant software.zeasy.momir android.permission.CAMERA
+adb shell pm grant io.github.moobaloo.momir.dev.debug android.permission.CAMERA
 ```
 
 ## Development conveniences
@@ -149,7 +149,7 @@ Render a slip without printing it:
 
 ```bash
 # long-press PRINT on the device, then
-adb pull /sdcard/Android/data/software.zeasy.momir/files/preview.png
+adb pull /sdcard/Android/data/io.github.moobaloo.momir.dev.debug/files/preview.png
 ```
 
 Screenshot the app:

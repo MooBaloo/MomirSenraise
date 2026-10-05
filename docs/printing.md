@@ -357,7 +357,7 @@ Long-press the **PRINT** button. It rolls a card, renders the slip, and writes
 it to `preview.png` in the app's external files directory instead of printing:
 
 ```bash
-adb pull /sdcard/Android/data/software.zeasy.momir/files/preview.png
+adb pull /sdcard/Android/data/io.github.moobaloo.momir.dev.debug/files/preview.png
 ```
 
 What it writes is the **whole torn-off slip**, margins included: 704 dots, with

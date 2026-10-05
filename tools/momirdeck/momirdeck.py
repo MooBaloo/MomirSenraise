@@ -1021,7 +1021,7 @@ def main() -> int:
 
     p = sub.add_parser("push", help="adb push momir.db and art.pack to the device")
     p.add_argument("--adb", default=None)
-    p.add_argument("--package", default="software.zeasy.momir")
+    p.add_argument("--package", default="io.github.moobaloo.momir.dev.debug")
     p.set_defaults(func=cmd_push)
 
     args = parser.parse_args()

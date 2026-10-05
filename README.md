@@ -141,11 +141,14 @@ That is the number. The default is 12 mm; the layout gets what is left of the
 
 ## Development
 
-For contributions to this fork, start a focused branch from `main` and open a
-pull request here. Include validation results and any remaining limitations.
+The release workflow uses feature PRs into protected `dev` and reviewed promotion
+PRs into `main`. Until `dev` is created and its required protections are verified,
+keep setup work in draft PRs targeting `main`. Include validation and limitations.
 
 See the [release strategy](docs/release-strategy.md) for build channels,
-versioning, validation, publication and installation requirements.
+versioning, validation, publication and installation requirements, and
+[Builds and signing](docs/builds-and-signing.md) for channel identities, commands
+and the setup gates before automatic publication can be enabled.
 
 To build and run the available unit tests, use JDK 21 and the Android SDK with
 platform 34 and build-tools 34.0.0. Set `ANDROID_HOME` to your SDK directory and
@@ -154,6 +157,10 @@ run from the repository root:
 ```sh
 bash ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest
 ```
+
+Local debug builds use the separate `io.github.moobaloo.momir.dev.debug` package.
+Published development builds use `io.github.moobaloo.momir.dev` and a different key.
+Settings → About shows the build identity; signing is not required for local tests.
 
 Bash is used because the wrapper is not executable in the repository. This
 build check needs no device or card corpus. The app currently has no unit test

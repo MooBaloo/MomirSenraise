@@ -20,6 +20,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import software.zeasy.momir.BuildConfig
 import software.zeasy.momir.R
 import software.zeasy.momir.Settings
 import software.zeasy.momir.data.ArtPack
@@ -780,6 +781,14 @@ class MainActivity : AppCompatActivity() {
         // uses; an AlertDialog title would come out in the platform sans.
         AlertDialog.Builder(this)
             .setView(view.root)
+            .setNeutralButton(R.string.about) { _, _ ->
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.about)
+                    .setMessage(getString(R.string.about_build, BuildConfig.VERSION_NAME,
+                        BuildConfig.VERSION_CODE, BuildConfig.BUILD_CHANNEL, BuildConfig.SOURCE_REVISION))
+                    .setPositiveButton(R.string.close, null)
+                    .show()
+            }
             .setPositiveButton(R.string.close) { _, _ ->
                 settings.copies = view.copiesSeek.progress + 1
                 settings.slipLengthMm = view.slipSeek.progress + SLIP_MIN_MM
