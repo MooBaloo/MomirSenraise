@@ -55,7 +55,7 @@ jobs:
           path: control
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ fromJSON(needs.prepare.outputs.identity).head }}
+          ref: ${{ fromJSON(needs.prepare.outputs.identity).merge }}
           fetch-depth: 0
           persist-credentials: false
           path: source
@@ -97,7 +97,7 @@ jobs:
           path: control
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ fromJSON(needs.prepare.outputs.identity).head }}
+          ref: ${{ fromJSON(needs.prepare.outputs.identity).merge }}
           fetch-depth: 0
           persist-credentials: false
           path: source
@@ -124,7 +124,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
           path: control
-      - name: Fail closed and publish on the exact reviewed head
+      - name: Fail closed and publish on the exact reviewed test merge
         env:
           GH_TOKEN: ${{ github.token }}
           IDENTITY: ${{ needs.prepare.outputs.identity }}

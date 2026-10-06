@@ -16,9 +16,10 @@ the repository's existing plan. No keys, settings, environments or apps are
 created by these files.
 
 The candidate runs only from current protected main, snapshots an open
-same-repository PR (any target), and marks its head pending. Separate disposable
-jobs run code review and Security. The publisher uses a fresh trusted checkout,
-no model execution, no OpenAI credentials, and rereads live PR head/base/target.
+same-repository PR (any target), and marks its test-merge commit pending.
+Separate disposable jobs run code review and Security. The publisher uses a fresh trusted checkout,
+no model execution, no OpenAI credentials, and rereads live PR head/base/target,
+`refs/pull/N/merge`, and the merge commit's ordered base/head parents.
 It consumes JSON through environment variables, never shell interpolation.
 Only the publisher and initial pending-status job have status-write permission.
 No checkout persists Git credentials; no PR program, build, dependency script,
@@ -28,19 +29,23 @@ separate credential-free workflow.
 The Codex Action is pinned to `bdf19a4a223ec2549a3e2274a0cf61556bc07675`,
 CLI `0.160.1`, with read-only sandbox, privilege dropping, a fresh Codex home,
 and the action as the final job step. Its schema-constrained result must echo
-repository, PR, full head/base SHAs, target branch, run ID and attempt. Process
-exit 0 alone is insufficient. Missing/malformed/oversized/duplicate-key JSON,
+repository, PR, full head/base/test-merge SHAs, target branch, run ID and attempt.
+Process exit 0 alone is insufficient. Missing/malformed/oversized/duplicate-key JSON,
 wrong identity, incomplete reviews, failed/skipped/cancelled jobs and P0/P1/P2
 findings block. P3 findings are nonblocking. A new run reviews the full current
 diff again; old clean results cannot substitute for new evidence.
 
 The separate pinned Security CLI `0.2.0` installs outside the checkout with
-install scripts disabled. It scans merge-base..head with `--fail-on-severity
-low`: all rated vulnerabilities block. Its documented exit 0 means completed
+install scripts disabled. Both reviewers inspect the test-merge tree and its
+base..merge diff, so the current base is part of the reviewed source. The Security
+command uses a main-controlled scan prompt and `--fail-on-severity low`: all
+rated vulnerabilities block. Its documented exit 0 means completed
 coverage and policy passed; exit 1 is a blocking finding, exit 2 includes errors
 and incomplete coverage, and interruptions also block. The trusted wrapper
-requires a parseable result with the documented manifest/findings/coverage
-fields and binds the CLI exit result and output digest to this run's identity.
+checks the pinned 0.2.0 result contract: completed manifest, exact base/merge
+target, complete coverage, matching scan IDs and no rated findings. Missing,
+malformed or oversized (over 4 MiB) results block even if the CLI exits 0. It
+binds the CLI exit result and output digest to this run's identity.
 It does not invent an alternative verdict from model prose. Raw Security
 results remain on the ephemeral runner; secure evidence delivery must be
 settled during activation rather than publishing vulnerability artifacts by
@@ -62,21 +67,15 @@ accident. General Codex code review is **not** Codex Security clearance.
    request. Environment provisioning and credential creation require separate
    authorization. This environment should not introduce an owner approval on
    each dev PR; protected control code on main carries the owner review.
-3. Establish a genuinely trusted required-check publisher before enabling
-   enforcement. The candidate's `Codex and Security review` commit-status name
-   and GitHub Actions app ID **alone are not sufficient**: another workflow with
-   write permission could spoof them. Determine available account capabilities
-   and choose an enforceable protected required-workflow identity or a dedicated
-   narrowly scoped GitHub App publisher with its credential available only to
-   the protected control workflow. The latter requires a separately approved
-   app/install and adapter change; neither is created here. Do not represent
-   this candidate as a bypass-resistant gate until this is solved and tested.
-   GitHub commit statuses are head-SHA scoped, not PR/base scoped: two PRs can
-   share a head but target different bases. The final enforcement path must
-   bind the required result to the PR and base as well, including a newly opened
-   or retargeted PR that shares an already-green head. A dedicated App alone
-   fixes publisher identity, not this scope problem. Include this case in the
-   activation pilot; the generic status in this draft is not sufficient.
+3. Decide the publisher trust boundary described below before enforcing the
+   new `Codex and Security review (merge)` context. No passing result may ever
+   be published on a head SHA under this context. Require the actual status,
+   not the disabled workflow's job conclusion (skipped jobs can look green).
+   Test GitHub's server-side test-merge selection and absent-status fallback,
+   including retargeting, duplicate PRs, base movement and force updates. The
+   implementation refuses unknown/conflicting/missing merges, verifies the PR
+   ref and ordered parents before work and publication, and never falls back to
+   head. Existing head-only contexts must not be substituted for this context.
 4. Protect control workflow, prompt, schema, policy and pins on main with owner
    review. Apply required PRs, current strict build/review checks, no bypass,
    no force pushes/deletions, and resolved threads to **all merge targets**;
@@ -95,7 +94,7 @@ accident. General Codex code review is **not** Codex Security clearance.
 6. Run a paid pilot only with explicit authorization: clean change, blocking
    code finding, blocking Security finding, missing credentials/access, timeout,
    stale head/base, concurrent retries and attempted forged status. Verify the
-   trusted publisher cannot be spoofed, no secret is exposed to PR code, and
+   selected publisher trust boundary holds, no secret is exposed to PR code, and
    findings are delivered safely for disposition. A failed publisher/API call
    must leave missing/pending/failure, never manufacture success. Cancellation
    can leave pending; rerun it. A narrow race exists between live identity read
@@ -105,6 +104,46 @@ accident. General Codex code review is **not** Codex Security clearance.
 Until these gates pass, enforce the owner's no-merge rule operationally and
 leave this PR draft. Do not disable existing main approval or substitute a
 thumbs-up/comment for actual review completion.
+
+## Native publisher controls and the single-owner boundary
+
+The draft already keeps workflow, prompts, schema and evaluator on protected
+main, accepts only a PR number, checks out untrusted review material separately,
+and has a fresh publisher job. A PR's copy of any control file is reviewed as
+source; this workflow never loads it as policy. Least-privilege job tokens and
+main-only credential environments prevent review jobs from being publishers.
+These controls do not require a new GitHub App and are useful in a single-owner
+repository with trusted write-capable automation.
+
+There is nevertheless a distinct limitation: GitHub's expected source can select
+the GitHub Actions app, not this particular personal-repository workflow. A new
+same-repository PR workflow can request `statuses: write` and post the same
+context without using our evaluator. A default read-only token setting, the
+existing workflow's `permissions: {}`, CODEOWNERS on main, and an environment
+protecting API keys do not cap another workflow's token. Treating PR changes as
+untrusted includes this case. Checking a workflow allowlist in our publisher
+cannot prevent an independent publisher from bypassing our code entirely.
+
+A native-only operational pilot is therefore possible **only with explicit
+acceptance that all repository writers and their workflow changes are trusted
+not to forge results**. It is not technical enforcement against untrusted
+same-repository workflow changes. No new app is required just to obtain reviews;
+existing integrated reviews remain useful, but comments are not required checks.
+For the stronger untrusted-PR requirement, do not claim native-only enforcement
+is adequate: a separately authorized, narrow App publisher is one option, not
+an automatic prerequisite or a change made by this draft. Its signing credential
+must be main-only and its app identity selected as the required status source.
+It needs no separate server when trusted Actions code mints installation tokens.
+Organization required-workflow identity is another option, but changing ownership
+or plan is outside this work; organization merge queues are not a personal-repo
+shortcut. Main owner approval remains separate from all-target machine review.
+
+The test-merge change addresses head/base reuse independently of publisher
+identity: GitHub evaluates test-merge statuses when present and otherwise uses
+head statuses. Our context never writes a passing head status. A new base/head
+therefore cannot borrow an old head success. This still needs a live ruleset
+pilot, including equal-commit duplicate PR/retarget cases; local fixtures do not
+prove GitHub's enforcement. Status authenticity remains the boundary above.
 
 ## Local checks and reuse
 
@@ -116,7 +155,9 @@ The policy and runner use Python's standard library and derive repository/PR
 identity at runtime. The only control-branch convention is `main`; evaluate it
 explicitly for each repository. The fixtures cover main, dev and other targets,
 blocking findings, malformed results, head/base/target changes, run identity,
-scanner errors and incomplete/skipped reviews. No API inference is used.
+scanner errors and incomplete/skipped reviews, wrong PR merge refs, absent or
+force-updated merges, reversed/wrong parents, and malformed Security decision
+fields. No API inference is used.
 
 Bounded rollout: finish Momir's inactive draft and approvals first; validate one
 paid Momir pilot; inventory only other **active personal** repositories read-only
@@ -131,3 +172,7 @@ References inspected 2026-10-06:
 - [Action source at the pin](https://github.com/openai/codex-action/tree/bdf19a4a223ec2549a3e2274a0cf61556bc07675)
 - [Codex Security CI](https://learn.chatgpt.com/docs/security/cli/ci)
 - [Security CLI result/exit contract](https://learn.chatgpt.com/docs/security/cli/reference)
+- [GitHub test-merge status selection](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks)
+- [GitHub token permissions](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token)
+- [Required workflow identity at organization/enterprise level](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
+- [Merge queue availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue)

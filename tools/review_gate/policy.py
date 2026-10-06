@@ -4,7 +4,7 @@ import re
 
 MAX_BYTES = 65536
 SHA = re.compile(r"[0-9a-f]{40}\Z")
-IDENTITY = ("repository", "pr", "head", "base", "base_ref", "run_id", "run_attempt")
+IDENTITY = ("repository", "pr", "head", "base", "base_ref", "merge", "run_id", "run_attempt")
 
 
 def require(condition, message):
@@ -12,8 +12,8 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def parse(raw):
-    require(isinstance(raw, str) and 0 < len(raw.encode()) <= MAX_BYTES, "missing/oversized result")
+def parse(raw, max_bytes=MAX_BYTES):
+    require(isinstance(raw, str) and 0 < len(raw.encode()) <= max_bytes, "missing/oversized result")
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -26,14 +26,49 @@ def parse(raw):
     return result
 
 
-def validate(expected, current, code, security, jobs):
+def validate_security_result(data, identity):
+    """Check decision fields in the pinned CLI 0.2.0 JSON contract."""
+    for field, document in (("manifest", "scan-manifest"), ("findings", "findings"), ("coverage", "coverage")):
+        value = data.get(field)
+        require(isinstance(value, dict) and value.get("documentType") == "codex-security." + document
+                and value.get("schemaVersion") == "1.0", "missing/unsupported security document")
+    scan = data["manifest"].get("scan")
+    require(isinstance(scan, dict) and scan.get("status") == "completed"
+            and isinstance(scan.get("id"), str) and bool(scan["id"]), "incomplete security scan")
+    target = scan.get("target")
+    require(isinstance(target, dict) and target.get("kind") == "git_diff"
+            and target.get("baseRevision") == identity["base"]
+            and target.get("headRevision") == identity["merge"], "wrong security revisions")
+    require(data["coverage"].get("completeness") == "complete", "incomplete security coverage")
+    require(data["coverage"].get("scanId") == scan["id"]
+            and data["findings"].get("scanId") == scan["id"], "mixed security scan documents")
+    findings = data["findings"].get("findings")
+    require(isinstance(findings, list), "missing security findings")
+    for finding in findings:
+        require(isinstance(finding, dict) and isinstance(finding.get("severity"), dict)
+                and finding["severity"].get("level") == "informational", "blocking/invalid security finding")
+
+
+def validate_revision(expected, current, merge_ref, merge_commit):
+    """Bind a PR to GitHub's current synthetic merge and its ordered parents."""
     require(set(expected) == set(IDENTITY), "invalid expected identity")
-    require(SHA.fullmatch(expected["head"]) and SHA.fullmatch(expected["base"]), "invalid revision")
+    require(all(isinstance(expected[k], str) and SHA.fullmatch(expected[k])
+                for k in ("head", "base", "merge")), "invalid revision")
+    require(expected["merge"] not in (expected["head"], expected["base"]), "test merge must be distinct")
     require(type(expected["pr"]) is int and expected["pr"] > 0, "invalid PR")
     require(current["state"] == "open" and current["head"]["repo"]["full_name"] == expected["repository"], "closed/fork PR")
     require(current["base"]["repo"]["full_name"] == expected["repository"], "wrong destination")
     require(current["number"] == expected["pr"] and current["head"]["sha"] == expected["head"]
             and current["base"]["sha"] == expected["base"] and current["base"]["ref"] == expected["base_ref"], "stale or retargeted PR")
+    require(current.get("mergeable") is True and current.get("merge_commit_sha") == expected["merge"], "absent/stale test merge")
+    require(merge_ref.get("ref") == f"refs/pull/{expected['pr']}/merge"
+            and merge_ref.get("object") == {"type": "commit", "sha": expected["merge"]}, "wrong PR merge ref")
+    require(merge_commit.get("sha") == expected["merge"]
+            and merge_commit.get("parents") == [expected["base"], expected["head"]], "wrong merge parents")
+
+
+def validate(expected, current, merge_ref, merge_commit, code, security, jobs):
+    validate_revision(expected, current, merge_ref, merge_commit)
     require(jobs == {"code": "success", "security": "success"}, "review failed, skipped, cancelled, or missing")
     for result in (code, security):
         require(result.get("identity") == expected, "wrong review identity")

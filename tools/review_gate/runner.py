@@ -13,6 +13,7 @@ spec = importlib.util.spec_from_file_location("policy", Path(__file__).with_name
 policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(policy)
 REPO = os.environ["GITHUB_REPOSITORY"]
+CONTEXT = "Codex and Security review (merge)"
 
 
 def api(path, body=None):
@@ -38,11 +39,23 @@ def prepare():
     pr = api("/pulls/" + number)
     policy.require(pr["state"] == "open" and pr["head"]["repo"]["full_name"] == REPO, "only open same-repository PRs")
     identity = dict(repository=REPO, pr=int(number), head=pr["head"]["sha"],
-                    base=pr["base"]["sha"], base_ref=pr["base"]["ref"],
+                    base=pr["base"]["sha"], base_ref=pr["base"]["ref"], merge=pr.get("merge_commit_sha"),
                     run_id=os.environ["GITHUB_RUN_ID"], run_attempt=os.environ["GITHUB_RUN_ATTEMPT"])
+    policy.validate_revision(identity, *snapshot(identity))
     output("identity", identity)
-    api("/statuses/" + identity["head"], {"state": "pending", "context": "Codex and Security review",
+    api("/statuses/" + identity["merge"], {"state": "pending", "context": CONTEXT,
         "description": "Review started for current head and base", "target_url": run_url()})
+
+
+def snapshot(identity):
+    """Read only GitHub-provided identity; never trust a PR-supplied ref/policy."""
+    number = str(identity["pr"])
+    ref = api("/git/ref/pull/" + number + "/merge")
+    commit = api("/git/commits/" + ref["object"]["sha"])
+    # Reread the PR after the ref/commit reads to detect intervening pushes.
+    pr = api("/pulls/" + number)
+    return (pr, {"ref": ref["ref"], "object": {"type": ref["object"]["type"], "sha": ref["object"]["sha"]}},
+            {"sha": commit["sha"], "parents": [parent["sha"] for parent in commit["parents"]]})
 
 
 def run_url():
@@ -58,18 +71,19 @@ def prompt():
 def security():
     identity = policy.parse(os.environ["IDENTITY"])
     source = Path(os.environ["GITHUB_WORKSPACE"], "source")
-    merge_base = subprocess.check_output(["git", "merge-base", identity["base"], identity["head"]], cwd=source, text=True).strip()
+    checked_out = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+    policy.require(checked_out == identity["merge"], "wrong scanner checkout")
     result = Path(os.environ["RUNNER_TEMP"], "security-result.json")
     binary = Path(os.environ["RUNNER_TEMP"], "security-cli/node_modules/.bin/codex-security")
     with result.open("wb") as stream:
-        process = subprocess.run([str(binary), "scan", str(source), "--diff", merge_base,
-            "--head", identity["head"], "--auth", "api-key", "--json", "--fail-on-severity", "low",
+        process = subprocess.run([str(binary), "scan", str(source), "--diff", identity["base"],
+            "--head", identity["merge"], "--auth", "api-key", "--json", "--fail-on-severity", "low",
+            "--scan-prompt-file", str(Path(__file__).parents[2] / ".github/codex/security-prompt.txt"),
             "--output-dir", str(Path(os.environ["RUNNER_TEMP"], "security-scan"))], stdout=stream)
     # Exit 0 is the CLI's documented complete-coverage/policy-pass contract.
     # Do not invent a model-authored security verdict or reinterpret exit 1/2.
     if process.returncode == 0:
-        data = json.loads(result.read_text())
-        policy.require(isinstance(data, dict) and all(k in data for k in ("manifest", "findings", "coverage")), "missing security result")
+        policy.validate_security_result(policy.parse(result.read_text(), max_bytes=4 * 1024 * 1024), identity)
     output("receipt", {"identity": identity, "exit_code": process.returncode, "threshold": "low",
                        "result_sha256": hashlib.sha256(result.read_bytes()).hexdigest()})
     sys.exit(process.returncode or 0)
@@ -79,7 +93,7 @@ def publish():
     expected = policy.parse(os.environ["IDENTITY"])
     state = "failure"
     try:
-        policy.validate(expected, api("/pulls/" + str(expected["pr"])),
+        policy.validate(expected, *snapshot(expected),
                         policy.parse(os.environ.get("CODE_RESULT", "")),
                         policy.parse(os.environ.get("SECURITY_RESULT", "")),
                         {"code": os.environ["CODE_JOB"], "security": os.environ["SECURITY_JOB"]})
@@ -87,7 +101,9 @@ def publish():
         state = "success"
     except (ValueError, KeyError, TypeError):
         print("Review gate rejected missing, stale, blocking, or incomplete evidence.")
-    api("/statuses/" + expected["head"], {"state": state, "context": "Codex and Security review",
+    # Never publish this context on the head: GitHub falls back to head checks
+    # when a new test merge has no status. A green fallback could reuse old review.
+    api("/statuses/" + expected["merge"], {"state": state, "context": CONTEXT,
         "description": "Current review policy passed" if state == "success" else "Review policy failed; inspect this run",
         "target_url": run_url()})
     sys.exit(0 if state == "success" else 1)

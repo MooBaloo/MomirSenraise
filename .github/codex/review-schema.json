@@ -26,6 +26,9 @@
         },
         "run_attempt": {
           "type": "string"
+        },
+        "merge": {
+          "type": "string"
         }
       },
       "required": [
@@ -35,7 +38,8 @@
         "base",
         "base_ref",
         "run_id",
-        "run_attempt"
+        "run_attempt",
+        "merge"
       ]
     },
     "status": {
