@@ -1,0 +1,91 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "pr": {
+          "type": "integer"
+        },
+        "head": {
+          "type": "string"
+        },
+        "base": {
+          "type": "string"
+        },
+        "base_ref": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "run_attempt": {
+          "type": "string"
+        },
+        "merge": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "pr",
+        "head",
+        "base",
+        "base_ref",
+        "run_id",
+        "run_attempt",
+        "merge"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "incomplete"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "priority": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "priority",
+          "title",
+          "path",
+          "line"
+        ]
+      }
+    }
+  },
+  "required": [
+    "identity",
+    "status",
+    "findings"
+  ]
+}
