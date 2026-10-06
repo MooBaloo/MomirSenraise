@@ -24,7 +24,7 @@ class RunnerTests(unittest.TestCase):
         self.pr.update(mergeable=True, merge_commit_sha='c'*40)
         self.ref = {'ref':'refs/pull/7/merge','object':{'type':'commit','sha':'c'*40}}
         self.commit = {'sha':'c'*40,'parents':[{'sha':'b'*40},{'sha':'a'*40}]}
-        self.env = dict(IDENTITY=json.dumps(self.identity),GITHUB_SHA='d'*40,GITHUB_RUN_ID='123',
+        self.env = dict(SECURITY_TRUST_POLICY='',IDENTITY=json.dumps(self.identity),GITHUB_SHA='d'*40,GITHUB_RUN_ID='123',
                         CODE_JOB='success',SECURITY_JOB='success',
                         CODE_RESULT=json.dumps(dict(identity=self.identity,status='complete',findings=[])),
                         SECURITY_RESULT=json.dumps(dict(identity=self.identity,exit_code=0,threshold='low',result_sha256='e'*64)))
@@ -88,7 +88,7 @@ class RunnerTests(unittest.TestCase):
     def test_scanner_wrong_checkout_never_runs(self):
         with tempfile.TemporaryDirectory() as directory:
             env = dict(self.env,RUNNER_TEMP=directory,GITHUB_WORKSPACE=directory)
-            with patch.dict(os.environ,env), patch.object(runner.subprocess,'check_output',return_value='a'*40), patch.object(runner.subprocess,'run') as scan, self.assertRaises(ValueError):
+            with patch.dict(os.environ,env), patch.object(runner,'require_scanner_trust'), patch.object(runner.subprocess,'check_output',return_value='a'*40), patch.object(runner.subprocess,'run') as scan, self.assertRaises(ValueError):
                 runner.security()
             scan.assert_not_called()
 
@@ -116,7 +116,7 @@ class RunnerTests(unittest.TestCase):
                     return pr
                 return self.pr
             env = dict(self.env,GITHUB_REF='refs/heads/main',PR_NUMBER='7',GITHUB_RUN_ATTEMPT='1')
-            with self.subTest(changed=changed), patch.dict(os.environ,env), patch.object(runner,'api',side_effect=api), patch.object(runner,'output') as output:
+            with self.subTest(changed=changed), patch.dict(os.environ,env), patch.object(runner,'require_scanner_trust'), patch.object(runner,'api',side_effect=api), patch.object(runner,'output') as output:
                 if changed:
                     with self.assertRaises(ValueError): runner.prepare()
                     output.assert_not_called()
@@ -126,6 +126,41 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual(output.call_args.args,('identity',self.identity))
                     self.assertEqual(writes[0][0],'/statuses/'+'c'*40)
                     self.assertEqual(writes[0][1]['state'],'pending')
+
+    def test_default_trust_policy_denies_before_git_or_scanner(self):
+        with patch.dict(os.environ,self.env), patch.object(runner.subprocess,'check_output') as git, patch.object(runner.subprocess,'run') as scan, patch.object(runner,'output') as output:
+            with self.assertRaisesRegex(ValueError,'not explicitly trusted'): runner.security()
+        git.assert_not_called()
+        scan.assert_not_called()
+        output.assert_not_called()
+
+    def test_owner_registry_requires_valid_exact_snapshot(self):
+        entry = {key:self.identity[key] for key in runner.policy.TRUST_IDENTITY}
+        with patch.dict(os.environ,{'SECURITY_TRUST_POLICY':json.dumps({'trusted_snapshots':[entry]})}):
+            runner.require_scanner_trust(self.identity)
+        for raw in ('broken JSON','{"trusted_snapshots":"all"}','{"trusted_snapshots":[]}'):
+            with patch.dict(os.environ,{'SECURITY_TRUST_POLICY':raw}), self.assertRaises(ValueError):
+                runner.require_scanner_trust(self.identity)
+
+    def test_pr_copy_cannot_authorize_scanner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory,'source/.github/codex/security-trust.json')
+            fake.parent.mkdir(parents=True)
+            fake.write_text(json.dumps({'trusted_snapshots':[{key:self.identity[key] for key in runner.policy.TRUST_IDENTITY}]}))
+            with patch.dict(os.environ,dict(self.env,GITHUB_WORKSPACE=directory)), patch.object(runner.subprocess,'run') as scan:
+                with self.assertRaisesRegex(ValueError,'not explicitly trusted'): runner.security()
+            scan.assert_not_called()
+
+    def test_prepare_denies_before_outputs_or_status_writes(self):
+        def api(path,body=None):
+            self.assertIsNone(body)
+            if path == '/branches/main': return {'commit':{'sha':'d'*40}}
+            return self.pr
+        normalized = (self.pr,self.ref,{'sha':'c'*40,'parents':['b'*40,'a'*40]})
+        env = dict(self.env,GITHUB_REF='refs/heads/main',PR_NUMBER='7',GITHUB_RUN_ATTEMPT='1')
+        with patch.dict(os.environ,env), patch.object(runner,'api',side_effect=api), patch.object(runner,'snapshot',return_value=normalized), patch.object(runner,'output') as output:
+            with self.assertRaisesRegex(ValueError,'not explicitly trusted'): runner.prepare()
+        output.assert_not_called()
 
     def test_scanner_exit_and_result_contract(self):
         clean = {'manifest':{'documentType':'codex-security.scan-manifest','schemaVersion':'1.0',
@@ -141,7 +176,7 @@ class RunnerTests(unittest.TestCase):
                     stdout.write((payload if isinstance(payload,str) else json.dumps(payload)).encode())
                     return SimpleNamespace(returncode=code)
                 env = dict(self.env,RUNNER_TEMP=directory,GITHUB_WORKSPACE=directory)
-                with patch.dict(os.environ,env), patch.object(runner.subprocess,'check_output',return_value='c'*40), patch.object(runner.subprocess,'run',side_effect=process) as scan, patch.object(runner,'output') as output:
+                with patch.dict(os.environ,env), patch.object(runner,'require_scanner_trust'), patch.object(runner.subprocess,'check_output',return_value='c'*40), patch.object(runner.subprocess,'run',side_effect=process) as scan, patch.object(runner,'output') as output:
                     with self.assertRaises(SystemExit if expected is not None else ValueError) as error:
                         runner.security()
                     if expected is None:

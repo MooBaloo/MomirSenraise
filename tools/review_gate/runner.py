@@ -42,6 +42,9 @@ def prepare():
                     base=pr["base"]["sha"], base_ref=pr["base"]["ref"], merge=pr.get("merge_commit_sha"),
                     run_id=os.environ["GITHUB_RUN_ID"], run_attempt=os.environ["GITHUB_RUN_ATTEMPT"])
     policy.validate_revision(identity, *snapshot(identity))
+    # This job has no OpenAI credentials; reject untrusted source before dependent
+    # jobs receive secrets. Same-repository membership is not a trust grant.
+    require_scanner_trust(identity)
     output("identity", identity)
     api("/statuses/" + identity["merge"], {"state": "pending", "context": CONTEXT,
         "description": "Review started for current head and base", "target_url": run_url()})
@@ -68,8 +71,16 @@ def prompt():
     Path(os.environ["RUNNER_TEMP"], "review-prompt.txt").write_text(text + "\nExact identity:\n" + json.dumps(identity))
 
 
+def require_scanner_trust(identity):
+    # Protected-main workflow supplies an owner-managed repository variable,
+    # never a dispatch input, PR file/label, or model-authored result.
+    raw = os.environ.get("SECURITY_TRUST_POLICY") or '{"trusted_snapshots":[]}'
+    policy.require_trusted_security_source(identity, policy.parse(raw))
+
+
 def security():
     identity = policy.parse(os.environ["IDENTITY"])
+    require_scanner_trust(identity)
     source = Path(os.environ["GITHUB_WORKSPACE"], "source")
     checked_out = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
     policy.require(checked_out == identity["merge"], "wrong scanner checkout")

@@ -36,6 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr }}
+          SECURITY_TRUST_POLICY: ${{ vars.SECURITY_TRUSTED_SNAPSHOTS }}
         run: python -I control/tools/review_gate/runner.py prepare
 
   code:
@@ -76,6 +77,9 @@ jobs:
           safety-strategy: drop-sudo
 
   security:
+    # prepare rejects sources absent from the owner-managed exact-snapshot policy
+    # BEFORE this job receives any environment secrets. Empty policy = deny all.
+    # Security CLI permissions cannot be narrowed with a read-only prompt.
     environment: codex-review-main
     needs: prepare
     runs-on: ubuntu-24.04
@@ -105,6 +109,7 @@ jobs:
         env:
           IDENTITY: ${{ needs.prepare.outputs.identity }}
           OPENAI_API_KEY: ${{ secrets.CODEX_SECURITY_API_KEY }}
+          SECURITY_TRUST_POLICY: ${{ vars.SECURITY_TRUSTED_SNAPSHOTS }}
           CODEX_SECURITY_STATE_DIR: ${{ runner.temp }}/security-state
         run: python -I control/tools/review_gate/runner.py security
 

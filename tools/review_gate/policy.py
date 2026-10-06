@@ -5,11 +5,27 @@ import re
 MAX_BYTES = 65536
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 IDENTITY = ("repository", "pr", "head", "base", "base_ref", "merge", "run_id", "run_attempt")
+TRUST_IDENTITY = ("repository", "pr", "head", "base", "base_ref", "merge")
 
 
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def require_trusted_security_source(identity, trust_policy):
+    """Admission only, not a sandbox: local Security scans require trusted code."""
+    require(set(trust_policy) == {"trusted_snapshots"}
+            and isinstance(trust_policy["trusted_snapshots"], list), "invalid scanner trust policy")
+    expected = {key: identity[key] for key in TRUST_IDENTITY}
+    require(type(expected["pr"]) is int and expected["pr"] > 0
+            and all(isinstance(expected[key], str) and SHA.fullmatch(expected[key])
+                    for key in ("head", "base", "merge")), "invalid trusted snapshot identity")
+    for entry in trust_policy["trusted_snapshots"]:
+        require(isinstance(entry, dict) and set(entry) == set(TRUST_IDENTITY)
+                and type(entry["pr"]) is int, "invalid trusted snapshot entry")
+    require(expected in trust_policy["trusted_snapshots"],
+            "Security CLI source is not explicitly trusted; scan and credentials must remain blocked")
 
 
 def parse(raw, max_bytes=MAX_BYTES):

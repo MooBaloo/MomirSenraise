@@ -158,6 +158,19 @@ class PolicyTests(unittest.TestCase):
         self.identity['merge'] = self.identity['head']
         with self.assertRaises(ValueError): self.check()
 
+    def test_security_trust_requires_exact_source_identity(self):
+        entry = {key:self.identity[key] for key in policy.TRUST_IDENTITY}
+        policy.require_trusted_security_source(self.identity,{'trusted_snapshots':[entry]})
+        for key in entry:
+            changed = dict(entry)
+            changed[key] = 8 if key == 'pr' else 'wrong'
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                policy.require_trusted_security_source(self.identity,{'trusted_snapshots':[changed]})
+        for value in ({}, {'trusted_snapshots':[]}, {'trusted_snapshots':'all'},
+                      {'trusted_snapshots':[{'repository':'owner/repo'}]}, {'trusted_snapshots':[dict(entry,pr=True)]}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                policy.require_trusted_security_source(self.identity,value)
+
     def test_schema_and_checker_identity_agree(self):
         schema = json.loads(Path(__file__).parents[2].joinpath('.github/codex/review-schema.json').read_text())
         self.assertEqual(set(schema['properties']['identity']['required']),set(policy.IDENTITY))

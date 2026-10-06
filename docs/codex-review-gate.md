@@ -22,8 +22,9 @@ no model execution, no OpenAI credentials, and rereads live PR head/base/target,
 `refs/pull/N/merge`, and the merge commit's ordered base/head parents.
 It consumes JSON through environment variables, never shell interpolation.
 Only the publisher and initial pending-status job have status-write permission.
-No checkout persists Git credentials; no PR program, build, dependency script,
-or workflow is deliberately executed in review jobs. Builds stay in their
+No checkout persists Git credentials. The code-review prompt asks not to run
+repository programs; the Security CLI has broader local permissions, described
+below. Prompts are not an isolation boundary. Builds stay in their
 separate credential-free workflow.
 
 The Codex Action is pinned to `bdf19a4a223ec2549a3e2274a0cf61556bc07675`,
@@ -51,9 +52,51 @@ results remain on the ephemeral runner; secure evidence delivery must be
 settled during activation rather than publishing vulnerability artifacts by
 accident. General Codex code review is **not** Codex Security clearance.
 
+## Security CLI source-trust boundary
+
+The Security CLI is **not** the read-only Codex Action sandbox. Its documented
+scan profile permits local reads and writes to workspace roots and scan state,
+uses no interactive approvals, and cannot be narrowed by `--codex` sandbox or
+permission overrides. Scan processes can inherit credentials. A read-only prompt,
+a separate job, or a GitHub environment does not isolate the scan's own API key
+from the scan process. No credential-exfiltration exploit is claimed here; this
+is a documented trust limitation that must shape admission.
+
+The prepare job, which has no OpenAI credentials, requires an exact trusted-source record
+before exposing outputs to either credential-bearing dependent job. Scanner
+entry repeats the check before any Git command or scan. The only policy input is
+`SECURITY_TRUSTED_SNAPSHOTS`, an owner-managed repository variable read by the
+protected-main workflow, with shape `{"trusted_snapshots": []}`. An unset, empty,
+malformed or nonmatching policy denies access. Each permitted record must match
+repository, PR number, full head/base/merge SHAs and base branch exactly. New
+commits, force pushes, base movement and retargeting require a new trust decision.
+No trust variable or record is created by this PR. Before configuring the registry,
+verify that its mutation authority is restricted to the chosen trusted operators;
+repository membership or a writable variable alone is not authorization.
+Same-repository membership,
+a trusted author, a PR label, passing tests and model-written results are not
+source trust. PR copies of trust files are never consulted. The registry is
+outside Git so recording a snapshot need not change the base revision itself.
+
+This is a default-deny safety interlock pending a **separate source-trust policy
+decision**, not a proposed owner approval on every dev PR or a complete automatic
+trust classifier. It intentionally admits no source today, even if the outer
+literal-false guard is removed. Do not populate it merely because automation
+created the PR. Before using this local CLI on untrusted changes, establish a
+verified supported host/credential isolation design; none is claimed here.
+Alternatively explicitly accept a trusted-input-only operating scope. Sources
+outside that scope remain blocked, not scanned with a warning. The all-target
+review requirement and additional owner approval only on main are unchanged.
+
+For any later trusted-input pilot use a disposable runner and only the scanner's
+required credential; no unrelated GitHub write token, cloud/signing credentials,
+or reusable host state. Receipt validation is a correctness guard, not protection
+against a malicious scan process that can write its workspace and output files.
+
 ## Activation gates (not performed)
 
-1. Approve a bounded API budget, model/effort choice, per-run limits and alert /
+1. Resolve the scanner source-trust boundary above; no input is trusted by
+   default. Then approve a bounded API budget, model/effort choice, per-run limits and alert /
    cutoff arrangement. ChatGPT or a GitHub subscription does not establish API
    billing authorization. Timeouts are not dollar caps. Confirm separately that
    the owner has Codex Security CLI access; a working general OpenAI key does
@@ -176,3 +219,5 @@ References inspected 2026-10-06:
 - [GitHub token permissions](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token)
 - [Required workflow identity at organization/enterprise level](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
 - [Merge queue availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue)
+- [Security CLI local scan permissions](https://learn.chatgpt.com/docs/security/cli/reference#local-scan-permissions)
+- [Security CI trusted-input requirement](https://learn.chatgpt.com/docs/security/cli/ci#prepare-the-workflow)
