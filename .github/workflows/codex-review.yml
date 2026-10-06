@@ -1,0 +1,135 @@
+name: Codex review (inactive draft)
+
+# Deliberately manual and hard-disabled. Activation requires a separately reviewed
+# change and the prerequisites in docs/codex-review-gate.md. No branch exclusions.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number (any target branch)
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: codex-review-${{ inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    if: ${{ false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    outputs:
+      identity: ${{ steps.prepare.outputs.identity }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: control
+      - id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr }}
+        run: python -I control/tools/review_gate/runner.py prepare
+
+  code:
+    environment: codex-review-main
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    outputs:
+      result: ${{ steps.codex.outputs.final-message }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: control
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ fromJSON(needs.prepare.outputs.identity).head }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+      - env:
+          IDENTITY: ${{ needs.prepare.outputs.identity }}
+        run: python -I control/tools/review_gate/runner.py prompt
+      # Keep Codex LAST: consume only its bounded JSON in a fresh publisher job.
+      - id: codex
+        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1, inspected 2026-10-06
+        with:
+          openai-api-key: ${{ secrets.OPENAI_REVIEW_API_KEY }}
+          codex-version: '0.160.1'
+          codex-home: ${{ runner.temp }}/codex-home
+          prompt-file: ${{ runner.temp }}/review-prompt.txt
+          output-schema-file: control/.github/codex/review-schema.json
+          codex-args: '["--ephemeral"]'
+          sandbox: read-only
+          safety-strategy: drop-sudo
+
+  security:
+    environment: codex-review-main
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      receipt: ${{ steps.scan.outputs.receipt }}
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+      - name: Install pinned scanner outside repository before checkout
+        run: npm install --prefix "$RUNNER_TEMP/security-cli" --ignore-scripts --no-audit --no-fund @openai/codex-security@0.2.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: control
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ fromJSON(needs.prepare.outputs.identity).head }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+      - id: scan
+        env:
+          IDENTITY: ${{ needs.prepare.outputs.identity }}
+          OPENAI_API_KEY: ${{ secrets.CODEX_SECURITY_API_KEY }}
+          CODEX_SECURITY_STATE_DIR: ${{ runner.temp }}/security-state
+        run: python -I control/tools/review_gate/runner.py security
+
+  publish:
+    name: Validate and publish review result
+    needs: [prepare, code, security]
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: control
+      - name: Fail closed and publish on the exact reviewed head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IDENTITY: ${{ needs.prepare.outputs.identity }}
+          CODE_RESULT: ${{ needs.code.outputs.result }}
+          SECURITY_RESULT: ${{ needs.security.outputs.receipt }}
+          CODE_JOB: ${{ needs.code.result }}
+          SECURITY_JOB: ${{ needs.security.result }}
+        run: python -I control/tools/review_gate/runner.py publish

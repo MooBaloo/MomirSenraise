@@ -1,0 +1,17 @@
+name: Review policy tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  policy:
+    name: Review policy fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: python -I -m unittest discover -s tools/review_gate -p 'test_*.py' -v
