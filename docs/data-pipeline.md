@@ -334,8 +334,9 @@ The Resync button does the same work over WiFi:
 
 1. `GET /bulk-data`, compare `updated_at` against what the corpus recorded. If
    unchanged, skip straight to artwork.
-2. Stream the Oracle JSONL, filter, insert what is new.
-3. Fetch, dither and append artwork for anything missing, at 10 requests/second.
+2. Stream the Oracle JSONL or JSON array, filter, insert new cards and refresh existing rows.
+3. Fetch, dither and append up to 4,000 missing artworks per run, with at least
+   100 ms between artwork requests.
 
 A set release adds a few hundred cards, so in practice this takes a couple of
 minutes. Cards are never deleted on-device; pruning only happens in the PC
@@ -344,3 +345,24 @@ builder, where it is easy to verify.
 The resync filter has to admit the same types and derive the same mask as the
 builder, or a resynced card will not answer the roll that the same card would
 answer if it had come over adb.
+
+Card rows and the bulk timestamp commit in one transaction after a complete,
+nonempty export is read. Malformed/truncated input, database write errors or
+cancellation during import roll that transaction back. JSON arrays may be
+compact or pretty-printed; parsing retains one card at a time. No rows are
+silently skipped because their JSON cannot be parsed.
+
+Artwork is a separate, resumable phase: an artwork failure does not roll back
+already committed card data. HTTP 429 or 503 stops the batch immediately and
+reports the phase and status, plus a numeric Retry-After delay when supplied.
+There is no automatic retry loop; wait before starting another sync. Other
+artwork failures are counted and surfaced in the completion notice. Failed
+artwork stays eligible for the next run, even when the bulk timestamp is current.
+Cancellation is reported as such instead of successful completion. The last-sync
+time advances only when the run completes without reported artwork failures;
+a successful batch may still leave artwork beyond the per-run limit.
+
+The local sync tests use synthetic data and HTTP fixtures, including a forced
+SQLite write failure. These tests establish error handling, not a diagnosis of
+any particular installation. Service lifecycle, low-storage and full-corpus
+performance still require separately authorized device validation.

@@ -10,8 +10,8 @@ import software.zeasy.momir.data.CardTypes
 import software.zeasy.momir.print.EscPos
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
+import java.io.IOException
+import java.io.InputStream
 import java.util.zip.GZIPInputStream
 
 /**
@@ -24,13 +24,12 @@ import java.util.zip.GZIPInputStream
  * V2 has 909 MB of RAM with maybe 340 MB actually free. Buffering that file, or
  * parsing it as one JSON array, would kill the app.
  *
- * Scryfall now publishes bulk data as JSONL - one complete card object per line -
- * which turns the whole problem into a loop over readLine(). Peak memory is one
- * card. The legacy single-array form is still handled as a fallback.
+ * Both the JSONL and JSON array exports are streamed one card at a time.
  */
 class ScryfallSync(
     private val repository: CardRepository,
     private val artPack: ArtPack,
+    private val openConnection: (String, String) -> InputStream = SyncHttp()::open,
 ) {
 
     interface Progress {
@@ -49,35 +48,41 @@ class ScryfallSync(
     )
 
     fun run(progress: Progress, fetchArtwork: Boolean = true): Outcome {
+        var cardResult = CardCounts(0, 0)
+        val artwork = ArtworkCounts()
+        var bulkTimestamp: String? = null
+        var stage = "Checking Scryfall"
         return try {
+            checkCancelled(progress)
             progress.onStage("Checking Scryfall")
             val bulk = fetchBulkEntry() ?: return Outcome(0, 0, 0, 0, null, "Scryfall has no oracle_cards export")
 
             val lastSeen = repository.meta(META_BULK_TIMESTAMP)
-            val cardResult = if (bulk.updatedAt == lastSeen) {
+            stage = "Downloading card data"
+            cardResult = if (bulk.updatedAt == lastSeen) {
                 progress.onStage("Card data already current")
                 CardCounts(0, 0)
             } else {
                 streamCards(bulk, progress)
             }
 
-            var newArt = 0
-            var failedArt = 0
+            bulkTimestamp = bulk.updatedAt
             if (fetchArtwork && !progress.isCancelled()) {
-                val artResult = fetchMissingArtwork(progress)
-                newArt = artResult.first
-                failedArt = artResult.second
+                stage = "Fetching artwork"
+                fetchMissingArtwork(progress, artwork)
             }
 
-            if (!progress.isCancelled()) {
-                repository.setMeta(META_BULK_TIMESTAMP, bulk.updatedAt)
+            checkCancelled(progress)
+            if (artwork.failed == 0) {
                 repository.setMeta(META_LAST_SYNC, System.currentTimeMillis().toString())
             }
 
-            Outcome(cardResult.added, cardResult.refreshed, newArt, failedArt, bulk.updatedAt)
+            Outcome(cardResult.added, cardResult.refreshed, artwork.added, artwork.failed, bulk.updatedAt,
+                if (artwork.failed > 0) "${artwork.failed} artworks failed; run sync again to retry missing artwork." else null)
         } catch (e: Exception) {
             Log.e(TAG, "Sync failed", e)
-            Outcome(0, 0, 0, 0, null, e.message ?: e.javaClass.simpleName)
+            Outcome(cardResult.added, cardResult.refreshed, artwork.added, artwork.failed, bulkTimestamp,
+                "$stage: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 
@@ -97,7 +102,9 @@ class ScryfallSync(
                 val legacy = entry.optString("download_uri", "")
                 val url = if (jsonl.isNotEmpty()) jsonl else legacy
                 if (url.isEmpty()) return null
-                return BulkEntry(url, entry.optString("updated_at"), jsonl.isNotEmpty())
+                val timestamp = entry.optString("updated_at")
+                if (timestamp.isBlank()) throw IOException("Missing bulk updated_at")
+                return BulkEntry(url, timestamp, jsonl.isNotEmpty())
             }
         }
         return null
@@ -115,26 +122,15 @@ class ScryfallSync(
             BufferedReader(InputStreamReader(stream, Charsets.UTF_8), 1 shl 16).use { reader ->
                 repository.beginTransaction()
                 try {
-                    while (true) {
-                        if (progress.isCancelled()) break
-                        val line = reader.readLine() ?: break
-                        val trimmed = line.trim().trimEnd(',')
-                        if (trimmed.isEmpty() || trimmed == "[" || trimmed == "]") continue
-                        if (!trimmed.startsWith("{")) continue
-
-                        val json = try {
-                            JSONObject(trimmed)
-                        } catch (e: Exception) {
-                            continue
-                        }
-
+                    BulkCards.read(reader, bulk.isJsonl) { json ->
+                        checkCancelled(progress)
                         scanned++
                         if (scanned % 2000 == 0) {
                             progress.onStage("Scanned $scanned cards")
                         }
 
-                        if (!isMomirLegal(json)) continue
-                        val card = toCard(json) ?: continue
+                        if (!isMomirLegal(json)) return@read
+                        val card = toCard(json) ?: throw IOException("Bulk card has no oracle_id")
 
                         val artUri = artUriOf(json)
                         if (repository.updateExisting(card, artUri)) {
@@ -144,6 +140,9 @@ class ScryfallSync(
                             added++
                         }
                     }
+                    checkCancelled(progress)
+                    if (scanned == 0) throw IOException("Empty bulk export")
+                    repository.setMeta(META_BULK_TIMESTAMP, bulk.updatedAt)
                     repository.setTransactionSuccessful()
                 } finally {
                     repository.endTransaction()
@@ -155,46 +154,55 @@ class ScryfallSync(
         return CardCounts(added, refreshed)
     }
 
-    private fun fetchMissingArtwork(progress: Progress): Pair<Int, Int> {
+    private data class ArtworkCounts(var added: Int = 0, var failed: Int = 0)
+
+    private fun fetchMissingArtwork(progress: Progress, counts: ArtworkCounts) {
         val pending = repository.cardsMissingArt(MAX_ART_PER_SYNC)
-        if (pending.isEmpty()) return 0 to 0
+        if (pending.isEmpty()) return
 
         progress.onStage("Fetching ${pending.size} artworks")
         if (!artPack.isOpen && !artPack.open()) {
-            artPack.createIfMissing(EscPos.PRINT_WIDTH_DOTS)
-            artPack.open()
-        }
-
-        var ok = 0
-        var failed = 0
-        pending.forEachIndexed { index, (oracleId, artUri) ->
-            if (progress.isCancelled()) return ok to failed
-            progress.onProgress(index + 1, pending.size)
-
-            try {
-                val bytes = openConnection(artUri, "image/*").use { it.readBytes() }
-                val dithered = Dither.fromJpeg(bytes)
-                if (dithered == null) {
-                    failed++
-                } else {
-                    val offset = artPack.append(dithered.raster)
-                    if (offset == null) {
-                        failed++
-                    } else {
-                        repository.recordArt(oracleId, offset, dithered.raster.size, dithered.height)
-                        ok++
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Artwork failed for $oracleId: ${e.message}")
-                failed++
+            if (!artPack.createIfMissing(EscPos.PRINT_WIDTH_DOTS) || !artPack.open()) {
+                throw IOException("Cannot open artwork pack")
             }
-
-            // Scryfall asks for no more than ten requests a second.
-            Thread.sleep(REQUEST_INTERVAL_MS)
         }
-        artPack.sync()
-        return ok to failed
+
+        try {
+            pending.forEachIndexed { index, (oracleId, artUri) ->
+                checkCancelled(progress)
+                progress.onProgress(index + 1, pending.size)
+
+                try {
+                    val bytes = openConnection(artUri, "image/*").use { it.readBytes() }
+                    val dithered = Dither.fromJpeg(bytes)
+                    if (dithered == null) {
+                        counts.failed++
+                    } else {
+                        val offset = artPack.append(dithered.raster)
+                        if (offset == null) {
+                            counts.failed++
+                        } else {
+                            repository.recordArt(oracleId, offset, dithered.raster.size, dithered.height)
+                            counts.added++
+                        }
+                    }
+                } catch (e: SyncHttp.HttpFailure) {
+                    if (e.status == 429 || e.status == 503) {
+                        counts.failed++
+                        throw e
+                    }
+                    counts.failed++
+                } catch (e: Exception) {
+                    Log.w(TAG, "Artwork failed for $oracleId: ${e.message}")
+                    counts.failed++
+                }
+
+                // Scryfall asks for no more than ten requests a second.
+                Thread.sleep(REQUEST_INTERVAL_MS)
+            }
+        } finally {
+            artPack.sync()
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -289,20 +297,13 @@ class ScryfallSync(
 
     // ------------------------------------------------------------------------
 
-    private fun openConnection(url: String, accept: String) =
-        (URL(url).openConnection() as HttpURLConnection).apply {
-            // Scryfall rejects requests without both of these.
-            setRequestProperty("User-Agent", USER_AGENT)
-            setRequestProperty("Accept", accept)
-            connectTimeout = 20_000
-            readTimeout = 60_000
-            instanceFollowRedirects = true
-        }.inputStream
+    private fun checkCancelled(progress: Progress) {
+        if (progress.isCancelled()) throw IOException("Sync cancelled")
+    }
 
     companion object {
         private const val TAG = "ScryfallSync"
         private const val BULK_INDEX_URL = "https://api.scryfall.com/bulk-data"
-        private const val USER_AGENT = "MomirSunmi/1.0 (+https://github.com/MagieAlex/MomirSunmi)"
 
         private const val REQUEST_INTERVAL_MS = 100L
         private const val MAX_ART_PER_SYNC = 4000
