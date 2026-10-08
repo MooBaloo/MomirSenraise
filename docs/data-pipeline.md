@@ -346,6 +346,10 @@ The resync filter has to admit the same types and derive the same mask as the
 builder, or a resynced card will not answer the roll that the same card would
 answer if it had come over adb.
 
+Full-resource downloads require HTTP 200. Partial responses (HTTP 206) are
+rejected before their body is read: even a valid JSONL prefix must not mark an
+incomplete export as current.
+
 Card rows and the bulk timestamp commit in one transaction after a complete,
 nonempty export is read. Malformed/truncated input, database write errors or
 cancellation during import roll that transaction back. JSON arrays may be

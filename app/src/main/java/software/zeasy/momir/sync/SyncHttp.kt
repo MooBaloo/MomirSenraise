@@ -11,6 +11,7 @@ internal class SyncHttp(
 ) {
     class HttpFailure(val status: Int, retryAfterSeconds: Long?) : IOException(
         "HTTP $status" + when (status) {
+            206 -> " (partial response rejected). "
             429 -> " (rate limited). "
             503 -> " (service unavailable). "
             else -> ". "
@@ -26,7 +27,9 @@ internal class SyncHttp(
             connection.readTimeout = 60_000
             connection.instanceFollowRedirects = true
             val status = connection.responseCode
-            if (status !in 200..299) {
+            // These are full-resource GETs, never range or conditional requests.
+            // A valid JSONL prefix from a 206 must not advance the bulk checkpoint.
+            if (status != HttpURLConnection.HTTP_OK) {
                 val retry = connection.getHeaderField("Retry-After")?.toLongOrNull()?.takeIf { it >= 0 }
                 throw HttpFailure(status, retry)
             }

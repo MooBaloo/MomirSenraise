@@ -13,6 +13,8 @@ import software.zeasy.momir.data.ArtPack
 import software.zeasy.momir.data.CardRepository
 import java.io.File
 import java.io.IOException
+import java.net.HttpURLConnection
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [28])
@@ -168,6 +170,139 @@ class ScryfallSyncTest {
         assertEquals(1, result.failedArtwork)
         assertTrue(result.error!!.contains("1 artworks failed"))
         assertEquals(1, repository.cardsMissingArt(10).size)
+    }
+
+    @Test fun partialJsonlResponseDoesNotCommitOrCheckpointAndFullRetrySucceeds() {
+        val index = """{"data":[{"type":"oracle_cards","updated_at":"partial-v1","jsonl_download_uri":"https://example.invalid/bulk"}]}"""
+        val second = card.replace("fixture-id", "fixture-id-2")
+        var partial = true
+        var bulkCalls = 0
+        val http = SyncHttp { url ->
+            val isBulk = url.path == "/bulk"
+            if (isBulk) bulkCalls++
+            object : HttpURLConnection(url) {
+                override fun connect() = Unit
+                override fun disconnect() = Unit
+                override fun usingProxy() = false
+                override fun getResponseCode() = if (isBulk && partial) 206 else 200
+                override fun getInputStream() = (if (!isBulk) index
+                    else if (partial) "$card\n" else "$card\n$second\n").byteInputStream()
+            }
+        }
+        val sync = ScryfallSync(repository, art, http::open)
+        val rejected = sync.run(progress, false)
+        assertTrue(rejected.error.orEmpty().contains("HTTP 206"))
+        assertEquals(0, repository.cardCount())
+        assertNull(repository.meta(ScryfallSync.META_BULK_TIMESTAMP))
+        assertNull(repository.meta(ScryfallSync.META_LAST_SYNC))
+        partial = false
+        assertNull(sync.run(progress, false).error)
+        assertEquals(2, bulkCalls)
+        assertEquals(2, repository.cardCount())
+        assertEquals("partial-v1", repository.meta(ScryfallSync.META_BULK_TIMESTAMP))
+    }
+
+    @Test fun seededRowAndEarlierInsertRollBackWhenLaterRecordFails() {
+        assertNull(sync("[$card]").error)
+        repository.setMeta(ScryfallSync.META_BULK_TIMESTAMP, "old")
+        repository.setMeta(ScryfallSync.META_LAST_SYNC, "123")
+        val updated = card.replace("Fixture", "Changed")
+        val inserted = card.replace("fixture-id", "new-id")
+        val result = sync("[$updated,$inserted,{broken]")
+        assertNotNull(result.error)
+        assertEquals(0, result.newCards)
+        assertEquals(0, result.refreshedCards)
+        assertEquals("Fixture", repository.cardByOracleId("fixture-id")!!.name)
+        assertNull(repository.cardByOracleId("new-id"))
+        assertEquals(1, repository.cardCount())
+        assertEquals("old", repository.meta(ScryfallSync.META_BULK_TIMESTAMP))
+        assertEquals("123", repository.meta(ScryfallSync.META_LAST_SYNC))
+    }
+
+    private fun artworkFixture(): ByteArray {
+        val image = android.graphics.Bitmap.createBitmap(8, 4, android.graphics.Bitmap.Config.ARGB_8888)
+        for (y in 0 until 4) for (x in 0 until 8) image.setPixel(x, y, if (x < 4) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+        return java.io.ByteArrayOutputStream().apply {
+            check(image.compress(android.graphics.Bitmap.CompressFormat.JPEG, 100, this))
+            image.recycle()
+        }.toByteArray()
+    }
+
+    @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun artworkRetryPersistsRasterAndDoesNotRedownloadCompletedArtwork() {
+        assertNotNull(sync("[$card]", artwork = true).error)
+        assertNull(repository.meta(ScryfallSync.META_LAST_SYNC))
+        val fixture = artworkFixture()
+        val expected = Dither.fromJpeg(fixture)!!
+        var artCalls = 0
+        val index = """{"data":[{"type":"oracle_cards","updated_at":"fixture-v1","download_uri":"https://example.invalid/bulk"}]}"""
+        val retry = ScryfallSync(repository, art) { url, _ ->
+            when {
+                url.endsWith("bulk-data") -> index.byteInputStream()
+                url.endsWith("/bulk") -> error("Committed bulk must not be fetched again")
+                else -> { artCalls++; fixture.inputStream() }
+            }
+        }
+        val result = retry.run(progress)
+        assertNull(result.error)
+        assertEquals(1, result.newArtwork)
+        assertEquals(0, result.failedArtwork)
+        assertTrue(repository.cardsMissingArt(10).isEmpty())
+        assertNotNull(repository.meta(ScryfallSync.META_LAST_SYNC))
+        // Reopen both resources so the assertions cover persisted offsets and bytes.
+        art.close(); repository.close()
+        assertTrue(repository.open()); assertTrue(art.open())
+        val stored = repository.cardByOracleId("fixture-id")!!
+        assertEquals(expected.height, stored.artHeight)
+        assertEquals(expected.raster.size, stored.artLength)
+        assertArrayEquals(expected.raster, art.read(stored.artOffset!!, stored.artLength!!))
+        assertNull(retry.run(progress).error)
+        assertEquals(1, artCalls)
+    }
+
+    @Test fun cancellationAfterCardCommitBeforeArtworkPreservesCardsOnly() {
+        val cancelling = object : ScryfallSync.Progress {
+            override fun onStage(stage: String) { if (stage.startsWith("Fetching ")) cancelled = true }
+            override fun onProgress(done: Int, total: Int) = Unit
+            override fun isCancelled() = cancelled
+        }
+        val index = """{"data":[{"type":"oracle_cards","updated_at":"committed","download_uri":"https://example.invalid/bulk"}]}"""
+        val result = ScryfallSync(repository, art) { url, _ ->
+            when {
+                url.endsWith("bulk-data") -> index.byteInputStream()
+                url.endsWith("/bulk") -> "[$card]".byteInputStream()
+                else -> error("No artwork request allowed after cancellation")
+            }
+        }.run(cancelling)
+        assertTrue(result.error.orEmpty().contains("cancelled"))
+        assertEquals(1, result.newCards)
+        assertEquals(1, repository.cardCount())
+        assertEquals("committed", repository.meta(ScryfallSync.META_BULK_TIMESTAMP))
+        assertNull(repository.meta(ScryfallSync.META_LAST_SYNC))
+        assertEquals(1, repository.cardsMissingArt(10).size)
+    }
+
+    @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun cancellationDuringArtworkRetainsCompletedRasterAndStopsNextRequest() {
+        val second = card.replace("fixture-id", "fixture-id-2")
+        val index = """{"data":[{"type":"oracle_cards","updated_at":"committed","download_uri":"https://example.invalid/bulk"}]}"""
+        val fixture = artworkFixture()
+        var artCalls = 0
+        val result = ScryfallSync(repository, art) { url, _ ->
+            when {
+                url.endsWith("bulk-data") -> index.byteInputStream()
+                url.endsWith("/bulk") -> "[$card,$second]".byteInputStream()
+                else -> { artCalls++; cancelled = true; fixture.inputStream() }
+            }
+        }.run(progress)
+        assertTrue(result.error.orEmpty().contains("cancelled"))
+        assertEquals(2, result.newCards)
+        assertEquals(1, result.newArtwork)
+        assertEquals(1, artCalls)
+        assertEquals(1, repository.artCount())
+        assertEquals(1, repository.cardsMissingArt(10).size)
+        assertEquals("committed", repository.meta(ScryfallSync.META_BULK_TIMESTAMP))
+        assertNull(repository.meta(ScryfallSync.META_LAST_SYNC))
     }
 
     @Test fun networkFailureDoesNotBecomeDatabaseDiagnosis() {

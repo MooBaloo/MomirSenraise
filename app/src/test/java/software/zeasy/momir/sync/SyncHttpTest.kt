@@ -49,6 +49,18 @@ class SyncHttpTest {
         }
     }
 
+    @Test fun partialResponseIsRejectedBeforeReadingBody() {
+        val connection = Connection(206)
+        try {
+            SyncHttp { connection }.open("https://example.invalid/export", "*/*")
+            fail("Expected partial response rejection")
+        } catch (e: SyncHttp.HttpFailure) {
+            assertEquals(206, e.status)
+        }
+        assertTrue(connection.disconnected)
+        assertFalse(connection.streamOpened)
+    }
+
     @Test fun untrustedRetryHeaderIsNotDisplayed() {
         try {
             SyncHttp { Connection(429, "<private response>") }.open("https://example.invalid", "*/*")
