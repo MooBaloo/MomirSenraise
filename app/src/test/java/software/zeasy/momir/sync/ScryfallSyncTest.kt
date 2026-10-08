@@ -261,6 +261,7 @@ class ScryfallSyncTest {
     }
 
     @Test fun cancellationAfterCardCommitBeforeArtworkPreservesCardsOnly() {
+        var artworkRequests = 0
         val cancelling = object : ScryfallSync.Progress {
             override fun onStage(stage: String) { if (stage.startsWith("Fetching ")) cancelled = true }
             override fun onProgress(done: Int, total: Int) = Unit
@@ -271,9 +272,13 @@ class ScryfallSyncTest {
             when {
                 url.endsWith("bulk-data") -> index.byteInputStream()
                 url.endsWith("/bulk") -> "[$card]".byteInputStream()
-                else -> error("No artwork request allowed after cancellation")
+                else -> {
+                    artworkRequests++
+                    error("No artwork request allowed after cancellation")
+                }
             }
         }.run(cancelling)
+        assertEquals(0, artworkRequests)
         assertTrue(result.error.orEmpty().contains("cancelled"))
         assertEquals(1, result.newCards)
         assertEquals(1, repository.cardCount())
