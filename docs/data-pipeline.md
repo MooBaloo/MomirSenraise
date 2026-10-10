@@ -1,8 +1,9 @@
 # Data pipeline
 
-This pipeline is inherited from the upstream Sunmi app and is unchanged by the
-H10S printing port. Device-specific timing and memory figures below describe
-the upstream hardware, not H10S acceptance results.
+This pipeline is inherited from upstream and is unchanged by the H10S printing
+port. Counts, sizes and timings below describe a historical sample corpus, not
+current Scryfall totals or H10S acceptance results. Use `stats` and actual file
+sizes to plan storage for a new corpus.
 
 How Scryfall's bulk export becomes the offline card corpus, and which cards get
 in and why.
@@ -14,9 +15,12 @@ python momirdeck.py build-db       # every rollable card   ~4 s
 python momirdeck.py build-tokens   # what creatures make   ~1 min
 python momirdeck.py build-art      # artwork               ~50 min, resumable
 python momirdeck.py stats          # what you ended up with
-python momirdeck.py push           # adb push to the device
+python momirdeck.py push --package 'YOUR.APPLICATION.ID' # authorized device transfer
 ```
 
+Run these commands from `tools/momirdeck/` after installing its dependencies;
+see the [builder guide](../tools/momirdeck/README.md). Transfer requires an
+[approved installation and target package](device-setup.md#load-a-corpus).
 Output lands in `tools/momirdeck/out/`:
 
 | File | Size | Contents |
@@ -32,9 +36,9 @@ which 28,117 carry a colour identity and 2,306 are colourless.
 Scryfall now publishes bulk data as **gzipped JSONL**, one complete card object
 per line. The Oracle export is 23 MB compressed, about 180 MB expanded.
 
-That format is what makes on-device resync possible at all. The V2 has 909 MB of
-RAM with roughly 340 MB free; parsing 180 MB as a single JSON array would kill
-the app. As JSONL it is a loop over `readLine()` and peak memory is one card.
+Streaming one card at a time avoids retaining the whole expanded export in
+memory. The JSONL path loops over `readLine()`; database, artwork and UI work
+still consume additional memory. Measure actual memory use on the target H10S.
 
 Both the Python builder and the Kotlin resync stream it the same way. (Both also
 keep a fallback path for the legacy single-array form.)
@@ -296,8 +300,9 @@ dead space, which is cheaper than rewriting a 400 MB file for a few hundred rows
 
 ## How big it gets
 
-Widening the roll past creatures very nearly doubles both files, so it is worth
-knowing what the device is in for. The V2 has about 1.4 GB free.
+In the sample below, widening the roll past creatures nearly doubled both
+files. Check free space on the target device and allow room for future artwork,
+resync and temporary files; these figures are not an H10S storage specification.
 
 | | Creatures only | All seven types |
 |---|---:|---:|

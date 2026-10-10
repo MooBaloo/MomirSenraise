@@ -23,15 +23,18 @@
                                     └──────────────────────────────────┘
 ```
 
-There is no server. The PC-side builder is a convenience, since it does in an
-hour what the device would take much longer to do, but the device can build its
-whole corpus itself over WiFi.
+There is no server. The diagram’s file sizes are sample corpus figures. The
+PC-side builder prepares the corpus before transfer; the inherited on-device
+resync updates an already-pushed corpus over WiFi, subject to device storage
+and runtime validation. It cannot bootstrap a fresh installation without
+`momir.db`; prepare and transfer the initial corpus from a PC.
 
 ## Hardware scope
 
 This fork targets the H10S, using a 384-dot raster and direct UART printing.
 The APK includes ARM 32-bit and ARM 64-bit native libraries and keeps the
-upstream minimum API level of 25. Physical H10S acceptance is still required.
+upstream minimum API level of 25. See the current
+[physical validation scope](device-setup.md#validation-scope).
 The existing Views/Canvas UI, streaming corpus pipeline, and packed artwork
 format are retained; this port does not claim new camera or device-policy support.
 
@@ -66,8 +69,8 @@ the em dash. Such a corpus holds creatures only, so afterwards Creatures and
 Permanents are populated and the rest are empty until it is rebuilt.
 
 `search` is a `LIKE '%...%'` over the name column, ordered so prefix matches
-come first. It cannot use an index and scans all 30,000 rows, which on this
-device takes a few milliseconds.
+come first. It scans matching names across the corpus; query time depends on
+corpus size and device performance.
 
 ### `print`
 
@@ -181,9 +184,8 @@ animation has not been changed by the printer transport port.
 
 The obvious way to draw a glow is `BlurMaskFilter`. It is also unsupported by
 the hardware-accelerated canvas, so reaching for it silently forces the view
-into a software layer: a full-screen 720 × 1440 bitmap re-rasterised on the CPU
-every frame, which on this chip is a slideshow. Everything in the overlay is
-built from gradients and stacked translucent fills instead. The halo is four
+into a software layer: a full-screen bitmap re-rasterised on the CPU every
+frame, increasing drawing cost. Everything in the overlay is built from gradients and stacked translucent fills instead. The halo is four
 banks of strips, one per edge, weighted heavily towards the top and inset at the
 corners so no two banks overlap. It was a ring of fourteen rounded-rect strokes,
 which was brightest where the strokes met, meaning the corners, on a device
@@ -249,16 +251,16 @@ resync finished, with the colour-identity stripe swapped for a solid red one
 when it is bad news. Those were nine stock Android toasts: a grey lozenge in the
 system font floating over a screen designed as a card.
 
-`ScannerActivity` uses `android.hardware.Camera` on purpose. On API 25, Camera2
-runs at LEGACY hardware level, which is the old pipeline behind a newer
-interface plus a state machine you do not need. Camera1's preview callback hands
-over an NV21 buffer, which is exactly the luminance plane ZXing wants.
+`ScannerActivity` retains the upstream `android.hardware.Camera` implementation.
+Its preview callback supplies an NV21 buffer whose luminance plane ZXing reads.
+This describes the implementation, not an H10S camera compatibility result;
+permission, preview, focus and QR decoding need a physical check.
 
 ## Threading
 
 Every database query, layout pass, dither blit and UART operation happens off
-the main thread via coroutines on `Dispatchers.IO`. On this device that is the
-difference between a dial that spins and one that stutters whenever you print.
+the main thread via coroutines on `Dispatchers.IO`, so these operations do not
+directly block UI input and drawing.
 
 The printer belongs to the process. Activity destruction cancels its caller,
 but does not close a descriptor under an active I/O call. Cleanup runs in a

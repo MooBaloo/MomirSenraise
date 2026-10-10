@@ -1,6 +1,10 @@
 # momirdeck
 
-Builds the offline card corpus for MomirSunmi. Stdlib plus Pillow, nothing else.
+Builds the offline card corpus for MomirSenraise. Stdlib plus Pillow, nothing else.
+
+Counts, output sizes and timings in this guide describe a historical upstream
+sample. They vary with the corpus, host and network, and are not H10S
+performance measurements. Run `stats` and inspect the files for your build.
 
 ```bash
 pip install Pillow
@@ -9,7 +13,7 @@ python momirdeck.py build-db        # every rollable card   ~4 s
 python momirdeck.py build-tokens    # what cards make       ~1 min
 python momirdeck.py build-art       # artwork               ~50 min, resumable
 python momirdeck.py stats           # what you got
-python momirdeck.py push            # adb push to the device
+python momirdeck.py push --package 'YOUR.APPLICATION.ID' # authorized device transfer
 ```
 
 Output goes to `out/`, which is git-ignored. It is about 430 MB of derived data;
@@ -83,8 +87,10 @@ and clear the offsets if you want to re-dither everything.
 ### `push`
 
 `adb push` of both files to
-`/sdcard/Android/data/software.zeasy.momir/files/`. Finds `adb` on `PATH` or in
-the usual SDK locations; `--adb` overrides.
+`/sdcard/Android/data/<application-id>/files/`. Pass the verified installed
+package with `--package`; the inherited default is `software.zeasy.momir`.
+Confirm the intended adb target and installation before transfer. Finds `adb`
+on `PATH` or in the usual SDK locations; `--adb` overrides.
 
 ## Global options
 

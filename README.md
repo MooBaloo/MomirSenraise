@@ -7,18 +7,23 @@ rules text, and either a QR code to its Scryfall page or the artwork, dithered.
 
 This fork targets the **Senraise H10S** using a direct UART printer backend.
 It builds on [MagieAlex/MomirSunmi](https://github.com/MagieAlex/MomirSunmi).
-The H10S port requires physical acceptance; passing CI does not prove printing
-or camera behavior. Card data and artwork remain local to the device.
+An H10S calibration-slip test has passed; full card printing, camera scanning,
+and fault recovery still need physical acceptance. See the
+[validation scope](docs/device-setup.md#validation-scope). Card data and artwork
+remain local to the device.
 
 <p align="center">
   <img src="docs/images/app.png" width="235" alt="The app: a dial of mana symbols and the print seal">
   &nbsp;
   <img src="docs/images/glow.png" width="235" alt="The print animation, glowing in the card's colour identity">
   &nbsp;
-  <img src="docs/images/slip-qr.png" width="150" alt="A printed QR slip">
+  <img src="docs/images/slip-qr.png" width="150" alt="Rendered QR slip preview">
   &nbsp;
-  <img src="docs/images/slip-artwork.png" width="150" alt="A printed artwork slip">
+  <img src="docs/images/slip-artwork.png" width="150" alt="Rendered artwork slip preview">
 </p>
+
+These inherited UI screenshots and rendered slip previews illustrate the app;
+they are not photographs of H10S output.
 
 ## What is Momir Basic?
 
@@ -38,28 +43,28 @@ but once the machine exists a random six-drop enchantment is one chip away.
 
 ## What it does
 
-- **30,423 cards and 31,156 artworks, 427 MB on the device.** 17,497 creatures,
-  3,620 instants, 3,562 enchantments, 3,507 artifacts, 3,385 sorceries, 287
-  planeswalkers, 36 battles.
+- **An offline card and artwork corpus.** The documented sample contains
+  30,423 cards and 31,156 artworks in about 427 MB. Counts and storage vary
+  with the corpus; run the builder’s `stats` command for your build.
 - **Six roll modes:** permanents, creatures, artifacts, enchantments,
   planeswalkers, spells. Every card carries one bit per type its type line
   names, so an artifact creature answers to a roll for either.
 - **Two slip layouts.** Both print everything listed above. One fills the middle
   with a large QR to Scryfall; the other fills it with the artwork and sets a
   small QR into the picture's corner.
-- **Every slip is 88 mm**, the long edge of a Magic card, margins included. A
-  stack of them shuffles instead of behaving like a pile of receipts. The layout
+- **An 88 mm slip layout target**, the long edge of a Magic card, margins
+  included. Actual paper length depends on H10S calibration. The layout
   re-flows to fill or fit: reminder text goes before type is shrunk, and the
   artwork goes before any rules text is cut.
-- **733 tokens.** 3,615 of the cards create something when they land, and those
-  print too, in any quantity.
+- **Token support.** Cards with linked tokens can print those tokens too,
+  with a selectable quantity. Available tokens depend on the loaded corpus.
 - **Card view.** Tapping the name on the result panel opens the card itself:
   artwork, mana cost and rules text in Magic's own symbols.
 - **Search.** Any card by name, then print it.
-- **Scan.** The device camera reads the QR off a slip you printed earlier and
-  resolves it against the local database. No network involved.
+- **Scan.** The inherited camera scanner resolves slip QR codes against the
+  local database without a network. H10S camera acceptance remains pending.
 - **Resync.** On WiFi the device fetches new cards from Scryfall and dithers
-  their artwork itself. Without WiFi nothing changes.
+  their artwork itself. This inherited path still needs an H10S end-to-end check.
 
 The screen is dressed as a Magic card rather than as an Android app: warm
 blacks, card-frame gold, a serif for anything that names a card, and Magic's own
@@ -116,8 +121,9 @@ bar, and it is also the blank margin at the head, because that paper has already
 passed the head when printing starts.
 
 Print the test slip, tear it off, and measure the white band above the card name.
-That is the number. The default is 12 mm; the layout gets what is left of the
-88 mm after it and the 5 mm foot margin, which is 71 mm or 568 dots.
+That is the number. The inherited defaults are 12 mm at the head and 5 mm at
+the foot, leaving a 71 mm (568-dot) layout budget. These are starting values,
+not measured H10S margins; verify the full slip length on your unit.
 
 ## Development
 
