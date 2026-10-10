@@ -135,6 +135,9 @@ bash ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest
 Bash is used because the wrapper is not executable in the repository. This
 build check needs no device or card corpus. JVM tests exercise the H10S status
 parser and transport lifecycle using fake I/O; they never open printer hardware.
+Sync tests use synthetic exports, fake HTTP connections and Robolectric SQLite
+to cover import rollback, cancellation, gzip, HTTP failures and artwork retries.
+They do not contact Scryfall or validate Android service behavior on a device.
 On Linux with the Android NDK and a C compiler, `bash tools/test_native_serial.sh` checks
 JNI buffer bounds and bounded I/O against pipes and a simulated drain queue.
 
