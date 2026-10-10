@@ -12,7 +12,7 @@ whatever the card, because uniform slips stack, fan and shuffle like cards.
 Slips whose length tracks how much rules text a creature happens to have stack
 like receipts.
 
-Width is not a problem. The V2 prints 58 mm paper at 203 dpi with 384 printable
+Width is not a problem. The H10S backend uses 58 mm paper at 203 dpi with 384 printable
 dots, which is 48 mm and comfortably inside 63 mm.
 
 Length is the interesting one. At 8 dots/mm the whole slip is **704 dots**, and
@@ -43,8 +43,9 @@ and paper rolls. Settings → Test print produces a calibration slip. Tear it of
 and measure the white band above the card name, which *is* the head-to-tear
 distance.
 
-The defaults above have been held against a rule on a V2 with the stock 12 mm
-gap. The slip comes off at 88 mm with the bands where this table says they are.
+The defaults and example images are inherited from the upstream Sunmi layout.
+They are not H10S physical validation. Measure and calibrate the H10S before
+claiming an 88 mm slip or the stated margin placement.
 
 So the renderer has two problems, not one: cards that want more than 568 dots,
 and cards that want less.
@@ -330,7 +331,7 @@ Grunt", "Lim-Dûl's Vault" and "Asmoranomardicadaistinaculdacar".
 
 ## ESC/POS
 
-One `sendRAWData` call per slip carries the whole job:
+One serialized UART job per slip carries these commands:
 
 ```
 ESC @            reset alignment, spacing, leftover state
@@ -343,13 +344,10 @@ ESC J n          feed n dots, repeated for n > 255
 enormous raster command, and a short band lets the motor keep up with the head.
 Bands print flush against each other, so the seam is invisible.
 
-The whole payload is roughly 30 KB, nowhere near the 1 MB Binder ceiling.
-Sending it as one transaction means the printer cannot interleave anything
-between the image and its feed.
-
-The SDK's own `printBitmap` is not used: it re-binarises whatever it is given,
-which would undo the dithering. `printText` is not used either, for the code
-page reason above. See [sunmi-aidl.md](sunmi-aidl.md).
+The whole payload is roughly 30 KB. The H10S transport sends paced 256-byte
+chunks without interleaving another job. It never hands rasterization to a
+vendor SDK. Drain and MCU status checks do not prove that paper has finished
+moving; see [H10S printer](h10s-printer.md) for release and failure semantics.
 
 ## Checking a layout without printing
 

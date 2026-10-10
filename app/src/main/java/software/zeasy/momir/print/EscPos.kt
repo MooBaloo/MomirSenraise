@@ -2,27 +2,13 @@ package software.zeasy.momir.print
 
 import java.io.ByteArrayOutputStream
 
-/**
- * The handful of ESC/POS commands MomirSunmi needs.
- *
- * Everything is pushed through IWoyouService.sendRAWData rather than the SDK's
- * higher-level printText/printBitmap calls. That is a deliberate trade:
- *
- *  - printText would have to round-trip card names through an ESC/POS code page,
- *    and Magic is full of "AEther Vial", "Jotun Grunt", "Lim-Dul's Vault",
- *    "Ghazban Ogre". Rendering type on a Canvas and shipping pixels sidesteps
- *    every encoding question and gives real kerning and word wrap.
- *  - printBitmap re-binarises whatever it is given, which would undo the careful
- *    Floyd-Steinberg dithering already baked into art.pack.
- *  - sendRAWData sits at index 10 of the AIDL, inside the prefix that is
- *    identical across every published version of the interface.
- */
+/** Raster ESC/POS commands shared with the upstream renderer; sent over H10S UART. */
 object EscPos {
 
     /** 203 dpi is 7.992 dots/mm; 8 is close enough and keeps the arithmetic honest. */
     const val DOTS_PER_MM = 8.0f
 
-    /** Sunmi V2: 58 mm paper, 384 printable dots = 48 mm. */
+    /** H10S: 58 mm paper, 384 printable dots = 48 mm. */
     const val PRINT_WIDTH_DOTS = 384
     const val BYTES_PER_ROW = PRINT_WIDTH_DOTS / 8
 

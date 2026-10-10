@@ -3,7 +3,7 @@
 ## The shape of the thing
 
 ```
-   YOUR PC                          THE SUNMI V2
+   YOUR PC                          SENRAISE H10S
    ┌────────────────────┐           ┌──────────────────────────────────┐
    │ momirdeck.py       │  adb push │  momir.db     20 MB   SQLite     │
    │  build-db          ├──────────►│  art.pack    407 MB   1-bit art  │
@@ -12,11 +12,11 @@
    └─────────┬──────────┘           │  │ app                        │  │
              │                      │  │   dial → random card       │  │
              │ bulk JSONL           │  │   renderer → 384px raster  │  │
-             ▼                      │  │   ESC/POS → AIDL           │  │
+             ▼                      │  │   ESC/POS → UART           │  │
       ┌─────────────┐               │  └─────────────┬──────────────┘  │
       │  Scryfall   │◄──────────────┤  resync        │                 │
       └─────────────┘   HTTPS       │                ▼                 │
-                                    │        woyou.aidlservice.jiuiv5  │
+                                    │        H10S printer MCU         │
                                     │                │                 │
                                     │                ▼   58 mm paper   │
                                     │           print head             │
@@ -27,32 +27,13 @@ There is no server. The PC-side builder is a convenience, since it does in an
 hour what the device would take much longer to do, but the device can build its
 whole corpus itself over WiFi.
 
-## The device sets the constraints
+## Hardware scope
 
-Everything unusual about this codebase traces back to the hardware:
-
-| | |
-|---|---|
-| Android | **7.1.1, API 25** |
-| CPU | **armeabi-v7a**, 32-bit only |
-| RAM | **909 MB** total, ~340 MB actually free |
-| Free storage | **1.8 GB** on `/data` |
-| Screen | 720 × 1440, 320 dpi |
-| Printer | 58 mm thermal, **384 dots** printable, 203 dpi |
-
-Consequences that show up throughout the code:
-
-- **Views and Canvas, not Compose.** Compose runs on API 21+, but a
-  recomposition loop on this CPU is felt on every frame. The dial and the button
-  are custom `View`s with `onDraw`.
-- **Everything streams.** The Scryfall Oracle export is ~180 MB expanded. It is
-  never held in memory; the resync reads it a line at a time from a JSONL
-  stream. See [data-pipeline.md](data-pipeline.md).
-- **Artwork is pre-rendered.** Decoding a JPEG and dithering it at print time
-  would cost hundreds of milliseconds per slip. The bytes in `art.pack` *are* the
-  printer payload: one seek, one read, straight out to the head.
-- **One pack file, not 31,000 images.** eMMC is slow at opening small files, and
-  4 KB block granularity would waste about 40 % on 13 KB images.
+This fork targets the H10S, using a 384-dot raster and direct UART printing.
+The APK includes ARM 32-bit and ARM 64-bit native libraries and keeps the
+upstream minimum API level of 25. Physical H10S acceptance is still required.
+The existing Views/Canvas UI, streaming corpus pipeline, and packed artwork
+format are retained; this port does not claim new camera or device-policy support.
 
 ## Modules
 
@@ -100,8 +81,9 @@ The interesting part.
 - `RulesText` splits oracle text into abilities, strips the braces off mana
   symbols and marks reminder text, which the renderer can then drop.
 - `EscPos` builds the handful of commands needed: reset, align, raster, feed.
-- `SunmiPrinter` binds the AIDL service and pushes one payload per slip. See
-  [sunmi-aidl.md](sunmi-aidl.md) for why the interface is trimmed.
+- `H10sPrinter` owns a process-wide `H10sTransport`. It acquires the UART only
+  for a print, serializes slips, and releases after idle grace. See
+  [h10s-printer.md](h10s-printer.md) for the native boundary and failure behavior.
 - `QrCode` wraps ZXing's low-level `Encoder` rather than `QRCodeWriter`, so
   modules land on exact dot boundaries.
 
@@ -194,8 +176,8 @@ scale. The idle breath on the rim runs only while the window has focus, and
 repaints only when its value has moved enough to see.
 
 `GlowOverlay` is the print animation: the screen edge takes the card's colour
-identity and a band of it sweeps up and off the top edge, which on a V2 is where
-the paper emerges.
+identity and a band of it sweeps up and off the top edge. This inherited
+animation has not been changed by the printer transport port.
 
 The obvious way to draw a glow is `BlurMaskFilter`. It is also unsupported by
 the hardware-accelerated canvas, so reaching for it silently forces the view
@@ -274,10 +256,10 @@ over an NV21 buffer, which is exactly the luminance plane ZXing wants.
 
 ## Threading
 
-Every database query, layout pass, dither blit and Binder round-trip happens off
+Every database query, layout pass, dither blit and UART operation happens off
 the main thread via coroutines on `Dispatchers.IO`. On this device that is the
 difference between a dial that spins and one that stutters whenever you print.
 
-The printer connection is bound once and held for the life of the activity.
-Binding costs a few hundred milliseconds, and a Momir game is many small prints
-in quick succession.
+The printer belongs to the process. Activity destruction cancels its caller,
+but does not close a descriptor under an active I/O call. Cleanup runs in a
+process scope after five seconds of idle grace and joins the status reader first.

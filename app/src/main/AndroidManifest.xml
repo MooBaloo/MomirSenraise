@@ -14,14 +14,6 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
-    <!--
-      The V2 runs API 25, where implicit package visibility is unrestricted, but
-      binding to the printer service on any API 30+ Sunmi device needs this.
-    -->
-    <queries>
-        <package android:name="woyou.aidlservice.jiuiv5" />
-    </queries>
-
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

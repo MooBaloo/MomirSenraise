@@ -1,12 +1,14 @@
-# MomirSunmi
+# MomirSenraise
 
 A handheld Momir Basic machine. Pick a card type, spin the dial to a mana value,
 press the button, and a receipt printer hands you a random card at that cost:
 name, mana value, mana cost, type line, power/toughness or loyalty, the full
 rules text, and either a QR code to its Scryfall page or the artwork, dithered.
 
-It runs offline on a **Sunmi V2** POS terminal. All 30,423 rollable cards and
-their artwork sit on the device.
+This fork targets the **Senraise H10S** using a direct UART printer backend.
+It builds on [MagieAlex/MomirSunmi](https://github.com/MagieAlex/MomirSunmi).
+The H10S port requires physical acceptance; passing CI does not prove printing
+or camera behavior. Card data and artwork remain local to the device.
 
 <p align="center">
   <img src="docs/images/app.png" width="235" alt="The app: a dial of mana symbols and the print seal">
@@ -54,7 +56,7 @@ but once the machine exists a random six-drop enchantment is one chip away.
 - **Card view.** Tapping the name on the result panel opens the card itself:
   artwork, mana cost and rules text in Magic's own symbols.
 - **Search.** Any card by name, then print it.
-- **Scan.** The V2's camera reads the QR off a slip you printed earlier and
+- **Scan.** The device camera reads the QR off a slip you printed earlier and
   resolves it against the local database. No network involved.
 - **Resync.** On WiFi the device fetches new cards from Scryfall and dithers
   their artwork itself. Without WiFi nothing changes.
@@ -78,32 +80,10 @@ device.
 
 ## Getting started
 
-You need a Sunmi V2 (or another Sunmi with the built-in 58 mm printer), Python
-3.9+ with Pillow, a JDK 17 or 21, and the Android SDK.
-
-```bash
-# 1. Build the corpus (about an hour, most of it downloading artwork)
-cd tools/momirdeck
-pip install Pillow
-python momirdeck.py build-db        # ~4 s     30,423 cards
-python momirdeck.py build-tokens    # ~1 min      733 tokens
-python momirdeck.py build-art       # ~50 min   407 MB, resumable
-
-# 2. Build and install the app
-cd ../..
-./gradlew :app:assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-
-# 3. Push the corpus to the device
-cd tools/momirdeck
-python momirdeck.py push
-```
-
-Open the app: if the dial is populated, you are done. Settings shows the full
-diagnostics, including how many cards, artworks and tokens the device has.
-
-`build-art` is resumable. If it dies at card 9,000, run it again and it picks up
-where it left off.
+Build instructions are in [Development](#development). Hardware requirements,
+installation boundaries, and the physical acceptance checklist are in
+[Device setup](docs/device-setup.md). The existing [corpus builder](docs/data-pipeline.md)
+still supplies card data and artwork; this printing port changes no corpus formats.
 
 ## Using it
 
@@ -148,7 +128,7 @@ See the [release strategy](docs/release-strategy.md) for build channels,
 versioning, validation, publication and installation requirements.
 
 To build and run the available unit tests, use JDK 21 and the Android SDK with
-platform 34 and build-tools 34.0.0. Set `ANDROID_HOME` to your SDK directory and
+platform 34, build-tools 34.0.0, and NDK 26.1.10909125. Set `ANDROID_HOME` to your SDK directory and
 run from the repository root:
 
 ```sh
@@ -156,9 +136,10 @@ bash ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest
 ```
 
 Bash is used because the wrapper is not executable in the repository. This
-build check needs no device or card corpus. The app currently has no unit test
-sources, so `testDebugUnitTest` reports `NO-SOURCE`; a successful run verifies
-the debug build, not behavioral coverage.
+build check needs no device or card corpus. JVM tests exercise the H10S status
+parser and transport lifecycle using fake I/O; they never open printer hardware.
+On Linux with the Android NDK and a C compiler, `bash tools/test_native_serial.sh` checks
+JNI buffer bounds and bounded I/O against pipes and a simulated drain queue.
 
 For runtime changes, describe relevant manual checks on supported hardware.
 Building the APK does not validate printing, camera, or other device behavior.
@@ -170,16 +151,16 @@ Building the APK does not validate printing, camera, or other device behavior.
 | [Architecture](docs/architecture.md) | How the pieces fit together and why |
 | [Data pipeline](docs/data-pipeline.md) | Scryfall → SQLite → art pack, and which cards count |
 | [Printing](docs/printing.md) | The length budget, dithering, ESC/POS |
-| [Sunmi AIDL](docs/sunmi-aidl.md) | Why only 21 of the printer service's methods are used |
-| [Device setup](docs/device-setup.md) | Getting a V2 ready, adb, troubleshooting |
+| [H10S printer](docs/h10s-printer.md) | UART ownership, failures, and idle release |
+| [Device setup](docs/device-setup.md) | H10S prerequisites and physical acceptance |
 
 ## Repository layout
 
 ```
 app/                    Android app (Kotlin, minSdk 25, Views, no Compose)
-  src/main/aidl/        Sunmi printer interface, trimmed to its stable prefix
+  src/main/jni/         Small H10S UART transport
   src/main/java/…/data      SQLite + art pack readers
-  src/main/java/…/print     Slip layout, dithering, ESC/POS, printer binding
+  src/main/java/…/print     Slip layout, dithering, ESC/POS, H10S transport
   src/main/java/…/sync      On-device Scryfall resync
   src/main/java/…/ui        The dial, the button, the sheets, the scanner
 tools/momirdeck/        The PC-side corpus builder

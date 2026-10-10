@@ -29,6 +29,8 @@ jobs:
         with:
           packages: platform-tools
       - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+        run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0' 'ndk;26.1.10909125'
+      - name: Check native UART boundary on host
+        run: bash tools/test_native_serial.sh
       - name: Build debug APK and run available unit tests
         run: bash ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest
