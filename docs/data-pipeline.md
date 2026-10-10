@@ -36,8 +36,11 @@ That format is what makes on-device resync possible at all. The V2 has 909 MB of
 RAM with roughly 340 MB free; parsing 180 MB as a single JSON array would kill
 the app. As JSONL it is a loop over `readLine()` and peak memory is one card.
 
-Both the Python builder and the Kotlin resync stream it the same way. (Both also
-keep a fallback path for the legacy single-array form.)
+Both the Python builder and Kotlin resync stream JSONL. Kotlin resync also
+parses JSON arrays structurally, including compact arrays and multiline objects.
+The unchanged Python builder fallback expects one complete object per line.
+The import validation and transaction rollback guarantees in
+[On-device resync](#on-device-resync) apply to Android resync.
 
 ## Which cards count
 
